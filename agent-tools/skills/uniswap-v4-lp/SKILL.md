@@ -43,8 +43,17 @@ node add-liquidity.mjs --amount 20 --range 25
 # Check position
 node check-position.mjs --token-id <ID>
 
-# Remove liquidity
-node remove-liquidity.mjs --token-id <ID> --percent 100
+# Monitor if in range
+node monitor-position.mjs --token-id <ID>
+
+# Collect fees (without removing liquidity)
+node collect-fees.mjs --token-id <ID>
+
+# Remove liquidity (partial or full)
+node remove-liquidity.mjs --token-id <ID> --percent 50
+
+# Rebalance (remove + re-add at current price)
+node rebalance.mjs --token-id <ID> --range 25
 ```
 
 ## Base Chain Contracts
