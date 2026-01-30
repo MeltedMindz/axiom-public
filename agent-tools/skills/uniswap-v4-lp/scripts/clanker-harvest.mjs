@@ -1,446 +1,584 @@
 #!/usr/bin/env node
 /**
- * Clanker Harvest — Complete fee management for Clanker-launched tokens
+ * 🌾 Clanker Harvest — Modular fee management for Clanker-launched tokens
  * 
- * End-to-end pipeline:
- *   1. Claim Clanker protocol fees (WETH + token)
- *   2. Collect LP position fees
- *   3. Compound X% back into the LP position
- *   4. Swap the remaining (100-X)% to USDC
- *   5. Send USDC to a harvest/vault address
+ * Fully configurable pipeline — pick what you need:
  * 
- * Usage:
- *   node clanker-harvest.mjs --token 0xTOKEN --token-id 1078751 \
- *     --harvest-address 0xVAULT --compound-pct 50
- *   
- *   node clanker-harvest.mjs --token 0xTOKEN --token-id 1078751 \
- *     --harvest-address 0xVAULT --compound-pct 80 --dry-run
- *
- *   node clanker-harvest.mjs --token 0xTOKEN --token-id 1078751 \
- *     --harvest-address 0xVAULT --compound-pct 20
+ *   CLAIM ONLY:
+ *     node clanker-harvest.mjs --token 0xTOKEN
  * 
- * Works for ANY Clanker-launched token with a V4 LP position.
+ *   CLAIM + COMPOUND (all fees back into LP):
+ *     node clanker-harvest.mjs --token 0xTOKEN --token-id 1078751 --compound-pct 100
+ * 
+ *   CLAIM + HARVEST (all fees swapped to USDC → vault):
+ *     node clanker-harvest.mjs --token 0xTOKEN --harvest-address 0xVAULT --compound-pct 0
+ * 
+ *   CLAIM + COMPOUND + HARVEST (split fees):
+ *     node clanker-harvest.mjs --token 0xTOKEN --token-id 1078751 \
+ *       --harvest-address 0xVAULT --compound-pct 50
+ * 
+ *   WITH THRESHOLDS (only act if fees exceed $X):
+ *     node clanker-harvest.mjs --token 0xTOKEN --token-id 1078751 \
+ *       --harvest-address 0xVAULT --compound-pct 50 --min-usd 10
+ * 
+ *   WITH CONFIG FILE:
+ *     node clanker-harvest.mjs --config harvest-config.json
+ * 
+ * Works for ANY Clanker token with a V4 LP position on Base.
  */
 
 import { createPublicClient, createWalletClient, http, formatEther, formatUnits, parseAbi, maxUint256, encodeAbiParameters, parseAbiParameters } from 'viem';
 import { base } from 'viem/chains';
 import { privateKeyToAccount } from 'viem/accounts';
-import { defaultAbiCoder } from './node_modules/@ethersproject/abi/lib/index.js';
+import fs from 'fs';
 
-// ─── CLI Args ────────────────────────────────────────────────────────────────
+// ─── CLI / Config ────────────────────────────────────────────────────────────
 const args = process.argv.slice(2);
 const getArg = (name, def) => { const i = args.indexOf('--' + name); return i >= 0 && args[i + 1] ? args[i + 1] : def; };
 const hasFlag = (name) => args.includes('--' + name);
 
-const TOKEN = getArg('token', null);
-const TOKEN_ID = getArg('token-id', null);
-const HARVEST_ADDRESS = getArg('harvest-address', null);
-const COMPOUND_PCT = parseInt(getArg('compound-pct', '50'));
-const SLIPPAGE_PCT = parseFloat(getArg('slippage', '1'));
-const DRY_RUN = hasFlag('dry-run');
-const FEE_CONTRACT = getArg('fee-contract', '0xf3622742b1e446d92e45e22923ef11c2fcd55d68');
+// Load config file if provided, CLI args override
+let config = {};
+const configPath = getArg('config', null);
+if (configPath && fs.existsSync(configPath)) {
+  config = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
+}
 
-if (!TOKEN || !TOKEN_ID || !HARVEST_ADDRESS) {
+const cfg = {
+  token:          getArg('token', config.token || null),
+  tokenId:        getArg('token-id', config.tokenId || null),
+  harvestAddress: getArg('harvest-address', config.harvestAddress || null),
+  compoundPct:    parseInt(getArg('compound-pct', config.compoundPct ?? '100')),
+  minUsd:         parseFloat(getArg('min-usd', config.minUsd ?? '0')),
+  slippage:       parseFloat(getArg('slippage', config.slippage ?? '1')),
+  feeContract:    getArg('fee-contract', config.feeContract || '0xf3622742b1e446d92e45e22923ef11c2fcd55d68'),
+  dryRun:         hasFlag('dry-run') || config.dryRun === true,
+  skipClaim:      hasFlag('skip-claim') || config.skipClaim === true,
+  skipLp:         hasFlag('skip-lp') || config.skipLp === true,
+};
+
+const harvestPct = 100 - cfg.compoundPct;
+const wantCompound = cfg.compoundPct > 0 && cfg.tokenId;
+const wantHarvest = harvestPct > 0 && cfg.harvestAddress;
+
+if (!cfg.token) {
   console.log(`
-🌾 Clanker Harvest — Complete fee management for Clanker tokens
+🌾 Clanker Harvest — Modular fee management for Clanker tokens
 
 Usage:
-  node clanker-harvest.mjs --token <TOKEN_ADDRESS> --token-id <LP_POSITION_ID> \\
-    --harvest-address <VAULT_ADDRESS> [--compound-pct 50] [--slippage 1] [--dry-run]
+  node clanker-harvest.mjs --token <TOKEN> [options]
 
-Options:
-  --token            Clanker token address (required)
-  --token-id         Uniswap V4 LP position NFT ID (required)
-  --harvest-address  Where to send harvested USDC (required)
-  --compound-pct     Percentage to compound back (0-100, default: 50)
-  --slippage         Slippage tolerance for swaps (default: 1%)
-  --fee-contract     Clanker fee contract (default: 0xf362...)
-  --dry-run          Simulate without executing
+Required:
+  --token              Clanker token address
+
+Pipeline options (mix & match):
+  --token-id <ID>      LP position NFT ID (needed for compound/LP collection)
+  --harvest-address    Where to send harvested USDC (needed for harvest)
+  --compound-pct <N>   % to compound back into LP (default: 100 if token-id set, else 0)
+                       0 = harvest everything, 100 = compound everything
+
+Thresholds:
+  --min-usd <N>        Minimum fee value (USD) to act (default: 0 = always act)
+
+Advanced:
+  --fee-contract       Clanker fee storage contract (default: 0xf362...)
+  --slippage <N>       Swap slippage % (default: 1)
+  --skip-claim         Skip Clanker fee claim (only do LP fees)
+  --skip-lp            Skip LP fee collection (only do Clanker fees)
+  --config <file>      Load config from JSON file
+  --dry-run            Simulate without executing
 
 Examples:
-  # 50/50 split — compound half, harvest half
-  node clanker-harvest.mjs --token 0xf3Ce5... --token-id 1078751 --harvest-address 0xVAULT
+  # Just claim Clanker protocol fees
+  node clanker-harvest.mjs --token 0xf3Ce5...
 
-  # Conservative — compound 80%, harvest 20%
-  node clanker-harvest.mjs --token 0xf3Ce5... --token-id 1078751 --harvest-address 0xVAULT --compound-pct 80
+  # Claim + compound 100% into LP
+  node clanker-harvest.mjs --token 0xf3Ce5... --token-id 1078751 --compound-pct 100
 
-  # Max harvest — compound 20%, harvest 80%
-  node clanker-harvest.mjs --token 0xf3Ce5... --token-id 1078751 --harvest-address 0xVAULT --compound-pct 20
+  # Claim + harvest 100% as USDC
+  node clanker-harvest.mjs --token 0xf3Ce5... --harvest-address 0xVAULT --compound-pct 0
 
-  # Pure compound (no harvest)
-  node clanker-harvest.mjs --token 0xf3Ce5... --token-id 1078751 --harvest-address 0xVAULT --compound-pct 100
+  # 50/50 split
+  node clanker-harvest.mjs --token 0xf3Ce5... --token-id 1078751 \\
+    --harvest-address 0xVAULT --compound-pct 50
+
+  # 80% compound / 20% harvest, only if > $10 accumulated
+  node clanker-harvest.mjs --token 0xf3Ce5... --token-id 1078751 \\
+    --harvest-address 0xVAULT --compound-pct 80 --min-usd 10
+
+  # Config file for cron
+  node clanker-harvest.mjs --config my-agent.json
   `);
   process.exit(1);
 }
 
-const harvestPct = 100 - COMPOUND_PCT;
-
 // ─── Contracts ───────────────────────────────────────────────────────────────
-const CONTRACTS = {
-  POOL_MANAGER: '0x498581ff718922c3f8e6a244956af099b2652b2b',
+const C = {
   POSITION_MANAGER: '0x7c5f5a4bbd8fd63184577525326123b519429bdc',
-  STATE_VIEW: '0xa3c0c9b65bad0b08107aa264b0f3db444b867a71',
   PERMIT2: '0x000000000022D473030F116dDEE9F6B43aC78BA3',
   WETH: '0x4200000000000000000000000000000000000006',
   USDC: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913',
-  SWAP_ROUTER_02: '0x2626664c2603336E57B271c5C0b26F421741e481',
+  SWAP_ROUTER: '0x2626664c2603336E57B271c5C0b26F421741e481',
 };
 
 // ─── ABIs ────────────────────────────────────────────────────────────────────
-const CLANKER_FEE_ABI = parseAbi([
+const CLANKER_ABI = parseAbi([
   'function claim(address feeOwner, address token) external',
   'function availableFees(address feeOwner, address token) external view returns (uint256)',
 ]);
 
-const POSITION_MANAGER_ABI = [
+const PM_ABI = [
   { name: 'modifyLiquidities', type: 'function', inputs: [{ name: 'unlockData', type: 'bytes' }, { name: 'deadline', type: 'uint256' }], outputs: [] },
   { name: 'getPoolAndPositionInfo', type: 'function', inputs: [{ type: 'uint256' }], outputs: [{ type: 'tuple', components: [{ name: 'currency0', type: 'address' }, { name: 'currency1', type: 'address' }, { name: 'fee', type: 'uint24' }, { name: 'tickSpacing', type: 'int24' }, { name: 'hooks', type: 'address' }] }, { type: 'uint256' }] },
   { name: 'getPositionLiquidity', type: 'function', inputs: [{ type: 'uint256' }], outputs: [{ type: 'uint128' }] },
 ];
 
-const STATE_VIEW_ABI = [
-  { name: 'getSlot0', type: 'function', inputs: [{ type: 'bytes32' }], outputs: [{ type: 'uint160' }, { type: 'int24' }, { type: 'uint24' }, { type: 'uint24' }] },
-];
-
-const ERC20_ABI = parseAbi([
+const ERC20 = parseAbi([
   'function balanceOf(address) view returns (uint256)',
   'function approve(address,uint256) returns (bool)',
   'function allowance(address,address) view returns (uint256)',
   'function symbol() view returns (string)',
-  'function decimals() view returns (uint8)',
   'function transfer(address,uint256) returns (bool)',
 ]);
 
-const SWAP_ROUTER_ABI = parseAbi([
+const SWAP_ABI = parseAbi([
   'function exactInputSingle((address tokenIn, address tokenOut, uint24 fee, address recipient, uint256 amountIn, uint256 amountOutMinimum, uint160 sqrtPriceLimitX96)) payable returns (uint256)',
 ]);
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
-const retry = async (fn, n = 3) => { for (let i = 0; i < n; i++) { try { return await fn(); } catch (e) { if (i === n - 1) throw e; await sleep(1000); } } };
 const pad32 = (hex) => hex.replace('0x', '').padStart(64, '0');
-const Q96 = BigInt(2) ** BigInt(96);
 
-function computePoolId(poolKey) {
-  const encoded = defaultAbiCoder.encode(
-    ['address', 'address', 'uint24', 'int24', 'address'],
-    [poolKey.currency0, poolKey.currency1, poolKey.fee, poolKey.tickSpacing, poolKey.hooks]
-  );
-  const { keccak256 } = require('./node_modules/viem/index.js');
-  // Use viem's keccak256
-  return keccak256(encoded);
+async function retry(fn, n = 3) {
+  for (let i = 0; i < n; i++) {
+    try { return await fn(); }
+    catch (e) { if (i === n - 1) throw e; await sleep(2000); }
+  }
+}
+
+async function getEthPrice() {
+  try {
+    const r = await fetch('https://api.dexscreener.com/latest/dex/tokens/0x4200000000000000000000000000000000000006');
+    const d = await r.json();
+    const p = d.pairs?.find(p => p.chainId === 'base' && p.quoteToken?.symbol === 'USDC');
+    if (p) return parseFloat(p.priceUsd);
+  } catch {} return 2700;
+}
+
+async function getTokenPrice(token) {
+  try {
+    const r = await fetch(`https://api.dexscreener.com/latest/dex/tokens/${token}`);
+    const d = await r.json();
+    const p = d.pairs?.[0];
+    if (p) return parseFloat(p.priceUsd);
+  } catch {} return 0;
+}
+
+function tickToSqrtPriceX96(tick) {
+  const Q96 = 2n ** 96n;
+  const absTick = Math.abs(tick);
+  let ratio = (absTick & 0x1) !== 0 ? 0xfffcb933bd6fad37aa2d162d1a594001n : (1n << 128n);
+  const tickBits = [
+    [0x2, 0xfff97272373d413259a46990580e213an], [0x4, 0xfff2e50f5f656932ef12357cf3c7fdccn],
+    [0x8, 0xffe5caca7e10e4e61c3624eaa0941cd0n], [0x10, 0xffcb9843d60f6159c9db58835c926644n],
+    [0x20, 0xff973b41fa98c081472e6896dfb254c0n], [0x40, 0xff2ea16466c96a3843ec78b326b52861n],
+    [0x80, 0xfe5dee046a99a2a811c461f1969c3053n], [0x100, 0xfcbe86c7900a88aedcffc83b479aa3a4n],
+    [0x200, 0xf987a7253ac413176f2b074cf7815e54n], [0x400, 0xf3392b0822b70005940c7a398e4b70f3n],
+    [0x800, 0xe7159475a2c29b7443b29c7fa6e889d9n], [0x1000, 0xd097f3bdfd2022b8845ad8f792aa5825n],
+    [0x2000, 0xa9f746462d870fdf8a65dc1f90e061e5n], [0x4000, 0x70d869a156d2a1b890bb3df62baf32f7n],
+    [0x8000, 0x31be135f97d08fd981231505542fcfa6n], [0x10000, 0x9aa508b5b7a84e1c677de54f3e99bc9n],
+    [0x20000, 0x5d6af8dedb81196699c329225ee604n], [0x40000, 0x2216e584f5fa1ea926041bedfe98n],
+    [0x80000, 0x48a170391f7dc42444e8fa2n],
+  ];
+  for (const [bit, val] of tickBits) {
+    if ((absTick & bit) !== 0) ratio = (ratio * val) >> 128n;
+  }
+  if (tick > 0) ratio = ((1n << 256n) - 1n) / ratio;
+  return (ratio >> 32n) + (ratio % (1n << 32n) === 0n ? 0n : 1n);
 }
 
 // ─── Main ────────────────────────────────────────────────────────────────────
 async function main() {
   const pk = process.env.NET_PRIVATE_KEY;
-  if (!pk) { console.error('NET_PRIVATE_KEY not set'); process.exit(1); }
+  if (!pk) { console.error('❌ NET_PRIVATE_KEY not set'); process.exit(1); }
 
   const account = privateKeyToAccount(pk);
   const rpcUrl = process.env.BASE_RPC_URL || 'https://mainnet.base.org';
   const transport = http(rpcUrl);
-  const publicClient = createPublicClient({ chain: base, transport });
-  const walletClient = createWalletClient({ chain: base, transport, account });
+  const pub = createPublicClient({ chain: base, transport });
+  const wallet = createWalletClient({ chain: base, transport, account });
 
-  const tokenId = BigInt(TOKEN_ID);
+  // Token info
+  let symbol = 'TOKEN';
+  try { symbol = await pub.readContract({ address: cfg.token, abi: ERC20, functionName: 'symbol' }); } catch {}
 
-  // Get token info
-  let tokenSymbol = 'TOKEN';
-  try { tokenSymbol = await publicClient.readContract({ address: TOKEN, abi: ERC20_ABI, functionName: 'symbol' }); } catch(e) {}
+  // Determine mode string
+  const steps = [];
+  if (!cfg.skipClaim) steps.push('claim');
+  if (!cfg.skipLp && cfg.tokenId) steps.push('collect-lp');
+  if (wantCompound) steps.push(`compound(${cfg.compoundPct}%)`);
+  if (wantHarvest) steps.push(`harvest(${harvestPct}%)→USDC`);
 
   console.log(`
-🌾 Clanker Harvest — Full Pipeline
+🌾 Clanker Harvest
 ═══════════════════════════════════════════════════
-🪙 Token: ${tokenSymbol} (${TOKEN})
-📋 Position: #${TOKEN_ID}
-💰 Split: ${COMPOUND_PCT}% compound / ${harvestPct}% harvest → USDC
-📬 Vault: ${HARVEST_ADDRESS}
-👛 Wallet: ${account.address}
-${DRY_RUN ? '🔮 DRY RUN MODE' : '🔥 LIVE MODE'}
+🪙  Token: ${symbol} (${cfg.token})
+📋  Pipeline: ${steps.join(' → ')}
+${cfg.tokenId ? `📊  Position: #${cfg.tokenId}\n` : ''}${cfg.harvestAddress ? `📬  Vault: ${cfg.harvestAddress}\n` : ''}${cfg.minUsd > 0 ? `⚙️   Min threshold: $${cfg.minUsd}\n` : ''}👛  Wallet: ${account.address}
+${cfg.dryRun ? '🔮  DRY RUN' : '🔥  LIVE'}
 ═══════════════════════════════════════════════════`);
 
-  // ─── Step 1: Claim Clanker Protocol Fees ──────────────────────────────────
-  console.log(`\n📌 Step 1/5: Checking Clanker protocol fees...`);
-  
-  let clankerWeth = 0n, clankerToken = 0n;
-  try {
-    clankerWeth = await retry(() => publicClient.readContract({
-      address: FEE_CONTRACT, abi: CLANKER_FEE_ABI, functionName: 'availableFees',
-      args: [account.address, CONTRACTS.WETH],
-    }));
-    clankerToken = await retry(() => publicClient.readContract({
-      address: FEE_CONTRACT, abi: CLANKER_FEE_ABI, functionName: 'availableFees',
-      args: [account.address, TOKEN],
-    }));
-  } catch (e) {
-    console.log(`   ⚠️  Could not read Clanker fees: ${e.message}`);
-  }
+  // Get prices for threshold check & reporting
+  const [ethPrice, tokenPrice] = await Promise.all([getEthPrice(), getTokenPrice(cfg.token)]);
+  console.log(`📈 Prices: ETH $${ethPrice.toFixed(0)} | ${symbol} $${tokenPrice.toFixed(10)}`);
 
-  console.log(`   WETH: ${formatEther(clankerWeth)}`);
-  console.log(`   ${tokenSymbol}: ${formatEther(clankerToken)}`);
+  // Track total claimed amounts
+  let claimedWeth = 0n;
+  let claimedToken = 0n;
 
-  if (!DRY_RUN && (clankerWeth > 0n || clankerToken > 0n)) {
-    if (clankerToken > 0n) {
-      console.log(`   Claiming ${tokenSymbol}...`);
-      const tx = await walletClient.writeContract({
-        address: FEE_CONTRACT, abi: CLANKER_FEE_ABI, functionName: 'claim',
-        args: [account.address, TOKEN],
-      });
-      await publicClient.waitForTransactionReceipt({ hash: tx });
-      console.log(`   ✅ ${tokenSymbol} claimed: ${tx}`);
-      await sleep(2000); // Wait for nonce
-    }
-    if (clankerWeth > 0n) {
-      console.log(`   Claiming WETH...`);
-      const tx = await walletClient.writeContract({
-        address: FEE_CONTRACT, abi: CLANKER_FEE_ABI, functionName: 'claim',
-        args: [account.address, CONTRACTS.WETH],
-      });
-      await publicClient.waitForTransactionReceipt({ hash: tx });
-      console.log(`   ✅ WETH claimed: ${tx}`);
-      await sleep(1000);
-    }
-  } else if (DRY_RUN && (clankerWeth > 0n || clankerToken > 0n)) {
-    console.log(`   🔮 Would claim both`);
-  } else {
-    console.log(`   No Clanker fees to claim`);
-  }
+  // ═══════════════════════════════════════════════════════════════════════════
+  // STEP 1: Claim Clanker protocol fees
+  // ═══════════════════════════════════════════════════════════════════════════
+  if (!cfg.skipClaim) {
+    console.log(`\n📌 Step: Claim Clanker fees`);
 
-  // ─── Step 2: Collect LP Position Fees ─────────────────────────────────────
-  console.log(`\n📌 Step 2/5: Collecting LP position fees...`);
+    const [availWeth, availToken] = await Promise.all([
+      retry(() => pub.readContract({ address: cfg.feeContract, abi: CLANKER_ABI, functionName: 'availableFees', args: [account.address, C.WETH] })),
+      retry(() => pub.readContract({ address: cfg.feeContract, abi: CLANKER_ABI, functionName: 'availableFees', args: [account.address, cfg.token] })),
+    ]);
 
-  // Read position
-  const [poolKey, posInfo] = await retry(() => publicClient.readContract({
-    address: CONTRACTS.POSITION_MANAGER, abi: POSITION_MANAGER_ABI,
-    functionName: 'getPoolAndPositionInfo', args: [tokenId],
-  }));
+    const wethUsd = parseFloat(formatEther(availWeth)) * ethPrice;
+    const tokenUsd = parseFloat(formatEther(availToken)) * tokenPrice;
+    console.log(`   WETH:  ${formatEther(availWeth)} (~$${wethUsd.toFixed(2)})`);
+    console.log(`   ${symbol}: ${formatEther(availToken)} (~$${tokenUsd.toFixed(2)})`);
+    console.log(`   Total: $${(wethUsd + tokenUsd).toFixed(2)}`);
 
-  const rawLiquidity = await retry(() => publicClient.readContract({
-    address: CONTRACTS.POSITION_MANAGER, abi: POSITION_MANAGER_ABI,
-    functionName: 'getPositionLiquidity', args: [tokenId],
-  }));
-
-  console.log(`   Pool: ${poolKey.currency0.slice(0,10)}... / ${poolKey.currency1.slice(0,10)}...`);
-  console.log(`   Liquidity: ${rawLiquidity}`);
-
-  // Wallet balances before
-  const wethBefore = await publicClient.readContract({ address: CONTRACTS.WETH, abi: ERC20_ABI, functionName: 'balanceOf', args: [account.address] });
-  const tokenBefore = await publicClient.readContract({ address: TOKEN, abi: ERC20_ABI, functionName: 'balanceOf', args: [account.address] });
-
-  if (!DRY_RUN) {
-    // Collect fees: DECREASE(0x01) with 0 liquidity + CLOSE_CURRENCY(0x11)
-    const tickLower = Number(BigInt(posInfo) >> BigInt(232));
-    const tickUpper = Number(BigInt((BigInt(posInfo) >> BigInt(208)) & BigInt(0xFFFFFF)));
-    // Adjust for signed ticks
-    const tL = tickLower > 0x7FFFFF ? tickLower - 0x1000000 : tickLower;
-    const tU = tickUpper > 0x7FFFFF ? tickUpper - 0x1000000 : tickUpper;
-    const actualTickLower = Math.min(tL, tU);
-    const actualTickUpper = Math.max(tL, tU);
-
-    // Proven pattern from auto-compound: DECREASE(0x01) + CLOSE_CURRENCY(0x11) x2
-    // Single closeParams encodes both currencies + recipient
-    const collectActionsHex = '0x0111';
-    const decreaseParams = '0x' +
-      pad32('0x' + tokenId.toString(16)) +
-      '0'.padStart(64, '0') +     // liquidity = 0 (fees only)
-      '0'.padStart(64, '0') +     // amount0Min = 0
-      '0'.padStart(64, '0') +     // amount1Min = 0
-      (5 * 32).toString(16).padStart(64, '0') +
-      '0'.padStart(64, '0');      // hookData = empty
-
-    const closeParams = '0x' +
-      pad32(poolKey.currency0) +
-      pad32(poolKey.currency1) +
-      pad32(account.address);
-
-    const collectData = encodeAbiParameters(
-      parseAbiParameters('bytes, bytes[]'),
-      [collectActionsHex, [decreaseParams, closeParams]]
-    );
-
-    // Approve Permit2
-    for (const tokenAddr of [poolKey.currency0, poolKey.currency1]) {
-      const allow = await publicClient.readContract({ address: tokenAddr, abi: ERC20_ABI, functionName: 'allowance', args: [account.address, CONTRACTS.PERMIT2] });
-      if (allow < BigInt('0xffffffffffffffffffffffff')) {
-        const tx = await walletClient.writeContract({ address: tokenAddr, abi: ERC20_ABI, functionName: 'approve', args: [CONTRACTS.PERMIT2, maxUint256] });
-        await publicClient.waitForTransactionReceipt({ hash: tx });
-        await sleep(500);
-      }
-    }
-
-    const deadline = BigInt(Math.floor(Date.now() / 1000) + 300);
-    const collectTx = await walletClient.writeContract({
-      address: CONTRACTS.POSITION_MANAGER, abi: POSITION_MANAGER_ABI,
-      functionName: 'modifyLiquidities', args: [collectData, deadline],
-    });
-    await publicClient.waitForTransactionReceipt({ hash: collectTx });
-    console.log(`   ✅ LP fees collected: ${collectTx}`);
-    await sleep(1000);
-  } else {
-    console.log(`   🔮 Would collect LP fees`);
-  }
-
-  // Check how much we collected (diff in wallet balances)
-  const wethAfterCollect = await publicClient.readContract({ address: CONTRACTS.WETH, abi: ERC20_ABI, functionName: 'balanceOf', args: [account.address] });
-  const tokenAfterCollect = await publicClient.readContract({ address: TOKEN, abi: ERC20_ABI, functionName: 'balanceOf', args: [account.address] });
-
-  const totalWethFees = wethAfterCollect - wethBefore + clankerWeth;
-  const totalTokenFees = tokenAfterCollect - tokenBefore + clankerToken;
-
-  console.log(`\n💰 Total Fees (Clanker + LP):`);
-  console.log(`   WETH: ${formatEther(totalWethFees)}`);
-  console.log(`   ${tokenSymbol}: ${formatEther(totalTokenFees)}`);
-
-  if (totalWethFees === 0n && totalTokenFees === 0n) {
-    console.log(`\n⚠️  No fees to process`);
-    return;
-  }
-
-  // Calculate split
-  const compoundWeth = totalWethFees * BigInt(COMPOUND_PCT) / 100n;
-  const compoundToken = totalTokenFees * BigInt(COMPOUND_PCT) / 100n;
-  const harvestWeth = totalWethFees - compoundWeth;
-  const harvestToken = totalTokenFees - compoundToken;
-
-  console.log(`\n📊 Split (${COMPOUND_PCT}/${harvestPct}):`);
-  console.log(`   Compound: ${formatEther(compoundWeth)} WETH + ${formatEther(compoundToken)} ${tokenSymbol}`);
-  console.log(`   Harvest:  ${formatEther(harvestWeth)} WETH + ${formatEther(harvestToken)} ${tokenSymbol}`);
-
-  // ─── Step 3: Compound ─────────────────────────────────────────────────────
-  if (COMPOUND_PCT > 0 && (compoundWeth > 0n || compoundToken > 0n)) {
-    console.log(`\n📌 Step 3/5: Compounding ${COMPOUND_PCT}% back into position...`);
-
-    if (!DRY_RUN) {
-      try {
-        // Calculate liquidity from available amounts
-        // Use a large liquidity value — the contract will use what it can
-        const liquidity = compoundWeth > 0n ? compoundWeth * BigInt(1e12) : compoundToken;
-
-        const addActionsHex = '0x000d'; // INCREASE + SETTLE_PAIR
-        const amount0Max = poolKey.currency0.toLowerCase() === CONTRACTS.WETH.toLowerCase() ? compoundWeth * 150n / 100n : compoundToken * 150n / 100n;
-        const amount1Max = poolKey.currency1.toLowerCase() === CONTRACTS.WETH.toLowerCase() ? compoundWeth * 150n / 100n : compoundToken * 150n / 100n;
-
-        const increaseParams = defaultAbiCoder.encode(
-          ['uint256', 'uint256', 'uint128', 'uint128', 'bytes'],
-          [tokenId.toString(), liquidity.toString(), amount0Max.toString(), amount1Max.toString(), '0x']
-        );
-        const settleParams = defaultAbiCoder.encode(['address', 'address'], [poolKey.currency0, poolKey.currency1]);
-
-        const addData = encodeAbiParameters(
-          parseAbiParameters('bytes, bytes[]'),
-          [addActionsHex, [increaseParams, settleParams]]
-        );
-
-        const deadline = BigInt(Math.floor(Date.now() / 1000) + 300);
-        const tx = await walletClient.writeContract({
-          address: CONTRACTS.POSITION_MANAGER, abi: POSITION_MANAGER_ABI,
-          functionName: 'modifyLiquidities', args: [addData, deadline],
-        });
-        const receipt = await publicClient.waitForTransactionReceipt({ hash: tx });
-        console.log(`   ✅ Compounded! TX: ${tx}`);
-        await sleep(1000);
-      } catch (err) {
-        console.log(`   ⚠️  Compound failed: ${err.shortMessage || err.message}`);
-        console.log(`   Continuing to harvest...`);
-      }
+    if (availWeth === 0n && availToken === 0n) {
+      console.log(`   → Nothing to claim`);
+    } else if (cfg.dryRun) {
+      console.log(`   🔮 Would claim`);
+      claimedWeth = availWeth;
+      claimedToken = availToken;
     } else {
-      console.log(`   🔮 Would compound`);
+      if (availToken > 0n) {
+        console.log(`   Claiming ${symbol}...`);
+        const tx = await wallet.writeContract({ address: cfg.feeContract, abi: CLANKER_ABI, functionName: 'claim', args: [account.address, cfg.token] });
+        await pub.waitForTransactionReceipt({ hash: tx });
+        console.log(`   ✅ TX: ${tx.slice(0, 20)}...`);
+        claimedToken = availToken;
+        await sleep(2000);
+      }
+      if (availWeth > 0n) {
+        console.log(`   Claiming WETH...`);
+        const tx = await wallet.writeContract({ address: cfg.feeContract, abi: CLANKER_ABI, functionName: 'claim', args: [account.address, C.WETH] });
+        await pub.waitForTransactionReceipt({ hash: tx });
+        console.log(`   ✅ TX: ${tx.slice(0, 20)}...`);
+        claimedWeth = availWeth;
+        await sleep(1000);
+      }
     }
-  } else {
-    console.log(`\n📌 Step 3/5: Skipping compound (${COMPOUND_PCT}%)`);
   }
 
-  // ─── Step 4: Swap harvest portion to USDC ─────────────────────────────────
-  if (harvestPct > 0 && (harvestWeth > 0n || harvestToken > 0n)) {
-    console.log(`\n📌 Step 4/5: Swapping ${harvestPct}% to USDC...`);
+  // ═══════════════════════════════════════════════════════════════════════════
+  // STEP 2: Collect LP position fees
+  // ═══════════════════════════════════════════════════════════════════════════
+  let lpWeth = 0n;
+  let lpToken = 0n;
+  let poolKey = null;
 
-    const usdcBefore = await publicClient.readContract({ address: CONTRACTS.USDC, abi: ERC20_ABI, functionName: 'balanceOf', args: [account.address] });
+  if (!cfg.skipLp && cfg.tokenId) {
+    console.log(`\n📌 Step: Collect LP fees (#${cfg.tokenId})`);
 
-    if (!DRY_RUN) {
-      // Swap WETH → USDC via V3
+    const tokenId = BigInt(cfg.tokenId);
+    const [pk_result, posInfo] = await retry(() => pub.readContract({
+      address: C.POSITION_MANAGER, abi: PM_ABI,
+      functionName: 'getPoolAndPositionInfo', args: [tokenId],
+    }));
+    poolKey = pk_result;
+
+    // Snapshot balances before collect
+    const [wethBefore, tokenBefore] = await Promise.all([
+      pub.readContract({ address: C.WETH, abi: ERC20, functionName: 'balanceOf', args: [account.address] }),
+      pub.readContract({ address: cfg.token, abi: ERC20, functionName: 'balanceOf', args: [account.address] }),
+    ]);
+
+    if (cfg.dryRun) {
+      console.log(`   🔮 Would collect LP fees`);
+    } else {
+      // Approve Permit2 if needed
+      for (const addr of [poolKey.currency0, poolKey.currency1]) {
+        const allow = await pub.readContract({ address: addr, abi: ERC20, functionName: 'allowance', args: [account.address, C.PERMIT2] });
+        if (allow < BigInt('0xffffffffffffffffffffffff')) {
+          console.log(`   Approving ${addr.slice(0, 10)}... to Permit2...`);
+          const tx = await wallet.writeContract({ address: addr, abi: ERC20, functionName: 'approve', args: [C.PERMIT2, maxUint256] });
+          await pub.waitForTransactionReceipt({ hash: tx });
+          await sleep(500);
+        }
+      }
+
+      // DECREASE(0x01) with 0 liquidity + CLOSE_CURRENCY(0x11) x2
+      const collectActions = '0x0111';
+      const decreaseParams = '0x' +
+        pad32('0x' + tokenId.toString(16)) +
+        '0'.padStart(64, '0') +
+        '0'.padStart(64, '0') +
+        '0'.padStart(64, '0') +
+        (5 * 32).toString(16).padStart(64, '0') +
+        '0'.padStart(64, '0');
+
+      const closeParams = '0x' +
+        pad32(poolKey.currency0) +
+        pad32(poolKey.currency1) +
+        pad32(account.address);
+
+      const collectData = encodeAbiParameters(
+        parseAbiParameters('bytes, bytes[]'),
+        [collectActions, [decreaseParams, closeParams]]
+      );
+
+      const deadline = BigInt(Math.floor(Date.now() / 1000) + 300);
+      const tx = await wallet.writeContract({
+        address: C.POSITION_MANAGER, abi: PM_ABI,
+        functionName: 'modifyLiquidities', args: [collectData, deadline],
+      });
+      await pub.waitForTransactionReceipt({ hash: tx });
+      console.log(`   ✅ Collected: ${tx.slice(0, 20)}...`);
+      await sleep(1000);
+
+      // Measure what we got
+      const [wethAfter, tokenAfter] = await Promise.all([
+        pub.readContract({ address: C.WETH, abi: ERC20, functionName: 'balanceOf', args: [account.address] }),
+        pub.readContract({ address: cfg.token, abi: ERC20, functionName: 'balanceOf', args: [account.address] }),
+      ]);
+      lpWeth = wethAfter - wethBefore;
+      lpToken = tokenAfter - tokenBefore;
+    }
+
+    const lpWethUsd = parseFloat(formatEther(lpWeth)) * ethPrice;
+    const lpTokenUsd = parseFloat(formatEther(lpToken)) * tokenPrice;
+    console.log(`   WETH:  ${formatEther(lpWeth)} (~$${lpWethUsd.toFixed(2)})`);
+    console.log(`   ${symbol}: ${formatEther(lpToken)} (~$${lpTokenUsd.toFixed(2)})`);
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // TOTAL & THRESHOLD CHECK
+  // ═══════════════════════════════════════════════════════════════════════════
+  const totalWeth = claimedWeth + lpWeth;
+  const totalToken = claimedToken + lpToken;
+  const totalUsd = parseFloat(formatEther(totalWeth)) * ethPrice + parseFloat(formatEther(totalToken)) * tokenPrice;
+
+  console.log(`\n💰 Total fees: $${totalUsd.toFixed(2)}`);
+  console.log(`   WETH:  ${formatEther(totalWeth)}`);
+  console.log(`   ${symbol}: ${formatEther(totalToken)}`);
+
+  if (totalWeth === 0n && totalToken === 0n) {
+    console.log(`\n✅ Nothing to process. Done.`);
+    return { totalUsd: 0, compounded: 0, harvested: 0 };
+  }
+
+  if (cfg.minUsd > 0 && totalUsd < cfg.minUsd) {
+    console.log(`\n⏸️  Below threshold ($${totalUsd.toFixed(2)} < $${cfg.minUsd}). Fees stay in wallet.`);
+    return { totalUsd, compounded: 0, harvested: 0, belowThreshold: true };
+  }
+
+  // Split
+  const compoundWeth = totalWeth * BigInt(cfg.compoundPct) / 100n;
+  const compoundToken = totalToken * BigInt(cfg.compoundPct) / 100n;
+  const harvestWeth = totalWeth - compoundWeth;
+  const harvestToken = totalToken - compoundToken;
+
+  console.log(`\n📊 Split: ${cfg.compoundPct}% compound / ${harvestPct}% harvest`);
+  if (wantCompound) console.log(`   Compound: ${formatEther(compoundWeth)} WETH + ${formatEther(compoundToken)} ${symbol}`);
+  if (wantHarvest) console.log(`   Harvest:  ${formatEther(harvestWeth)} WETH + ${formatEther(harvestToken)} ${symbol}`);
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // STEP 3: Compound into LP
+  // ═══════════════════════════════════════════════════════════════════════════
+  if (wantCompound && (compoundWeth > 0n || compoundToken > 0n)) {
+    console.log(`\n📌 Step: Compound ${cfg.compoundPct}% → LP #${cfg.tokenId}`);
+
+    if (cfg.dryRun) {
+      console.log(`   🔮 Would compound`);
+    } else {
+      try {
+        if (!poolKey) {
+          const [pk_result] = await retry(() => pub.readContract({
+            address: C.POSITION_MANAGER, abi: PM_ABI,
+            functionName: 'getPoolAndPositionInfo', args: [BigInt(cfg.tokenId)],
+          }));
+          poolKey = pk_result;
+        }
+
+        const tokenId = BigInt(cfg.tokenId);
+
+        // Read current tick for liquidity calculation
+        const { keccak256, encodePacked } = await import('viem');
+        const poolId = keccak256(encodeAbiParameters(
+          parseAbiParameters('address, address, uint24, int24, address'),
+          [poolKey.currency0, poolKey.currency1, poolKey.fee, poolKey.tickSpacing, poolKey.hooks]
+        ));
+        const stateViewAbi = [{ name: 'getSlot0', type: 'function', inputs: [{ type: 'bytes32' }], outputs: [{ type: 'uint160' }, { type: 'int24' }, { type: 'uint24' }, { type: 'uint24' }] }];
+        const [sqrtPriceX96, currentTick] = await retry(() => pub.readContract({
+          address: '0xa3c0c9b65bad0b08107aa264b0f3db444b867a71', abi: stateViewAbi,
+          functionName: 'getSlot0', args: [poolId],
+        }));
+
+        // Read position tick range from posInfo
+        const [, posInfo] = await retry(() => pub.readContract({
+          address: C.POSITION_MANAGER, abi: PM_ABI,
+          functionName: 'getPoolAndPositionInfo', args: [tokenId],
+        }));
+        const rawLower = Number(BigInt(posInfo) >> 232n);
+        const rawUpper = Number((BigInt(posInfo) >> 208n) & BigInt(0xFFFFFF));
+        const tL = rawLower > 0x7FFFFF ? rawLower - 0x1000000 : rawLower;
+        const tU = rawUpper > 0x7FFFFF ? rawUpper - 0x1000000 : rawUpper;
+        const tickLower = Math.min(tL, tU);
+        const tickUpper = Math.max(tL, tU);
+
+        // Calculate liquidity from amounts
+        const sqrtLower = tickToSqrtPriceX96(tickLower);
+        const sqrtUpper = tickToSqrtPriceX96(tickUpper);
+        const Q96 = 2n ** 96n;
+
+        let liquidity;
+        const isWethCurrency0 = poolKey.currency0.toLowerCase() === C.WETH.toLowerCase();
+        const amount0 = isWethCurrency0 ? compoundWeth : compoundToken;
+        const amount1 = isWethCurrency0 ? compoundToken : compoundWeth;
+
+        if (sqrtPriceX96 <= sqrtLower) {
+          liquidity = amount0 * sqrtLower * sqrtUpper / ((sqrtUpper - sqrtLower) * Q96);
+        } else if (sqrtPriceX96 >= sqrtUpper) {
+          liquidity = amount1 * Q96 / (sqrtUpper - sqrtLower);
+        } else {
+          const liq0 = amount0 * sqrtPriceX96 * sqrtUpper / ((sqrtUpper - sqrtPriceX96) * Q96);
+          const liq1 = amount1 * Q96 / (sqrtPriceX96 - sqrtLower);
+          liquidity = liq0 < liq1 ? liq0 : liq1;
+        }
+
+        if (liquidity <= 0n) {
+          console.log(`   ⚠️ Computed liquidity = 0, skipping compound`);
+        } else {
+          // Slippage buffer on max amounts
+          const slippageMul = BigInt(Math.floor((100 + cfg.slippage * 2) * 100));
+          const amount0Max = amount0 * slippageMul / 10000n;
+          const amount1Max = amount1 * slippageMul / 10000n;
+
+          // INCREASE(0x00) + SETTLE_PAIR(0x0d)
+          const addActions = '0x000d';
+          const { defaultAbiCoder } = await import('./node_modules/@ethersproject/abi/lib/index.js');
+          const increaseParams = defaultAbiCoder.encode(
+            ['uint256', 'uint256', 'uint128', 'uint128', 'bytes'],
+            [tokenId.toString(), liquidity.toString(), amount0Max.toString(), amount1Max.toString(), '0x']
+          );
+          const settleParams = defaultAbiCoder.encode(
+            ['address', 'address'],
+            [poolKey.currency0, poolKey.currency1]
+          );
+          const addData = encodeAbiParameters(
+            parseAbiParameters('bytes, bytes[]'),
+            [addActions, [increaseParams, settleParams]]
+          );
+
+          const deadline = BigInt(Math.floor(Date.now() / 1000) + 300);
+          const tx = await wallet.writeContract({
+            address: C.POSITION_MANAGER, abi: PM_ABI,
+            functionName: 'modifyLiquidities', args: [addData, deadline],
+          });
+          await pub.waitForTransactionReceipt({ hash: tx });
+          console.log(`   ✅ Compounded! TX: ${tx.slice(0, 20)}...`);
+          await sleep(1000);
+        }
+      } catch (err) {
+        console.log(`   ⚠️ Compound failed: ${err.shortMessage || err.message}`);
+      }
+    }
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // STEP 4: Swap harvest portion to USDC
+  // ═══════════════════════════════════════════════════════════════════════════
+  let harvestedUsdc = 0n;
+
+  if (wantHarvest && (harvestWeth > 0n || harvestToken > 0n)) {
+    console.log(`\n📌 Step: Swap ${harvestPct}% → USDC`);
+
+    const usdcBefore = await pub.readContract({ address: C.USDC, abi: ERC20, functionName: 'balanceOf', args: [account.address] });
+
+    if (cfg.dryRun) {
+      const est = parseFloat(formatEther(harvestWeth)) * ethPrice + parseFloat(formatEther(harvestToken)) * tokenPrice;
+      console.log(`   🔮 Would swap ~$${est.toFixed(2)} to USDC`);
+    } else {
+      // Swap WETH → USDC
       if (harvestWeth > 0n) {
         try {
           console.log(`   Swapping ${formatEther(harvestWeth)} WETH → USDC...`);
-          
-          // Approve WETH to SwapRouter
-          const allow = await publicClient.readContract({ address: CONTRACTS.WETH, abi: ERC20_ABI, functionName: 'allowance', args: [account.address, CONTRACTS.SWAP_ROUTER_02] });
+          const allow = await pub.readContract({ address: C.WETH, abi: ERC20, functionName: 'allowance', args: [account.address, C.SWAP_ROUTER] });
           if (allow < harvestWeth) {
-            const appTx = await walletClient.writeContract({ address: CONTRACTS.WETH, abi: ERC20_ABI, functionName: 'approve', args: [CONTRACTS.SWAP_ROUTER_02, maxUint256] });
-            await publicClient.waitForTransactionReceipt({ hash: appTx });
+            const tx = await wallet.writeContract({ address: C.WETH, abi: ERC20, functionName: 'approve', args: [C.SWAP_ROUTER, maxUint256] });
+            await pub.waitForTransactionReceipt({ hash: tx });
             await sleep(500);
           }
-
-          const tx = await walletClient.writeContract({
-            address: CONTRACTS.SWAP_ROUTER_02, abi: SWAP_ROUTER_ABI,
+          const tx = await wallet.writeContract({
+            address: C.SWAP_ROUTER, abi: SWAP_ABI,
             functionName: 'exactInputSingle',
-            args: [{
-              tokenIn: CONTRACTS.WETH, tokenOut: CONTRACTS.USDC, fee: 500,
-              recipient: account.address, amountIn: harvestWeth,
-              amountOutMinimum: 0n, sqrtPriceLimitX96: 0n,
-            }],
+            args: [{ tokenIn: C.WETH, tokenOut: C.USDC, fee: 500, recipient: account.address, amountIn: harvestWeth, amountOutMinimum: 0n, sqrtPriceLimitX96: 0n }],
           });
-          await publicClient.waitForTransactionReceipt({ hash: tx });
-          console.log(`   ✅ WETH → USDC: ${tx}`);
+          await pub.waitForTransactionReceipt({ hash: tx });
+          console.log(`   ✅ WETH → USDC: ${tx.slice(0, 20)}...`);
           await sleep(1000);
         } catch (err) {
           console.log(`   ❌ WETH swap failed: ${err.shortMessage || err.message}`);
         }
       }
 
-      // For non-WETH tokens, we'd need V4 swap (AXIOM → WETH → USDC)
-      // TODO: V4 Universal Router swap for token → WETH
+      // TODO: Token → WETH → USDC via V4 Universal Router
       if (harvestToken > 0n) {
-        console.log(`   ⚠️  ${tokenSymbol} → USDC swap via V4 not yet implemented`);
-        console.log(`   ${formatEther(harvestToken)} ${tokenSymbol} remains in wallet`);
+        console.log(`   ⚠️ ${symbol} → USDC swap not yet implemented (stays in wallet)`);
       }
-    } else {
-      console.log(`   🔮 Would swap to USDC`);
+
+      // Measure USDC gained
+      await sleep(1000);
+      const usdcAfter = await pub.readContract({ address: C.USDC, abi: ERC20, functionName: 'balanceOf', args: [account.address] });
+      harvestedUsdc = usdcAfter - usdcBefore;
     }
 
-    // ─── Step 5: Transfer USDC to vault ───────────────────────────────────────
-    console.log(`\n📌 Step 5/5: Transferring USDC to vault...`);
+    // ═══════════════════════════════════════════════════════════════════════════
+    // STEP 5: Transfer USDC to vault
+    // ═══════════════════════════════════════════════════════════════════════════
+    if (harvestedUsdc > 0n) {
+      console.log(`\n📌 Step: Transfer USDC → vault`);
+      console.log(`   Amount: ${formatUnits(harvestedUsdc, 6)} USDC`);
 
-    if (!DRY_RUN) {
-      await sleep(2000); // Wait for balance to update
-      const usdcNow = await publicClient.readContract({ address: CONTRACTS.USDC, abi: ERC20_ABI, functionName: 'balanceOf', args: [account.address] });
-      const usdcGained = usdcNow - usdcBefore;
-
-      if (usdcGained > 0n) {
-        console.log(`   USDC to transfer: ${formatUnits(usdcGained, 6)}`);
-        const tx = await walletClient.writeContract({
-          address: CONTRACTS.USDC, abi: ERC20_ABI, functionName: 'transfer',
-          args: [HARVEST_ADDRESS, usdcGained],
-        });
-        await publicClient.waitForTransactionReceipt({ hash: tx });
-        console.log(`   ✅ Sent ${formatUnits(usdcGained, 6)} USDC → ${HARVEST_ADDRESS}`);
-        console.log(`   TX: https://basescan.org/tx/${tx}`);
+      if (cfg.dryRun) {
+        console.log(`   🔮 Would transfer to ${cfg.harvestAddress}`);
       } else {
-        console.log(`   ⚠️  No USDC gained from swaps`);
+        const tx = await wallet.writeContract({
+          address: C.USDC, abi: ERC20, functionName: 'transfer',
+          args: [cfg.harvestAddress, harvestedUsdc],
+        });
+        await pub.waitForTransactionReceipt({ hash: tx });
+        console.log(`   ✅ Sent! TX: https://basescan.org/tx/${tx}`);
       }
-    } else {
-      console.log(`   🔮 Would transfer USDC to vault`);
+    } else if (!cfg.dryRun && harvestWeth > 0n) {
+      console.log(`   ⚠️ No USDC to transfer`);
     }
-  } else {
-    console.log(`\n📌 Step 4-5: Skipping harvest (compound-pct = 100%)`);
   }
 
-  // ─── Summary ───────────────────────────────────────────────────────────────
-  const wethFinal = await publicClient.readContract({ address: CONTRACTS.WETH, abi: ERC20_ABI, functionName: 'balanceOf', args: [account.address] });
-  const tokenFinal = await publicClient.readContract({ address: TOKEN, abi: ERC20_ABI, functionName: 'balanceOf', args: [account.address] });
-
+  // ═══════════════════════════════════════════════════════════════════════════
+  // SUMMARY
+  // ═══════════════════════════════════════════════════════════════════════════
   console.log(`
 ═══════════════════════════════════════════════════
-✅ Clanker Harvest Complete!
+✅ Clanker Harvest Complete
 ═══════════════════════════════════════════════════
-   Clanker fees claimed: ${formatEther(clankerWeth)} WETH + ${formatEther(clankerToken)} ${tokenSymbol}
-   LP fees collected: ${formatEther(totalWethFees - clankerWeth)} WETH + ${formatEther(totalTokenFees - clankerToken)} ${tokenSymbol}
-   Compounded (${COMPOUND_PCT}%): ${formatEther(compoundWeth)} WETH + ${formatEther(compoundToken)} ${tokenSymbol}
-   Harvested (${harvestPct}%): ${formatEther(harvestWeth)} WETH swapped to USDC
+   Total fees:     $${totalUsd.toFixed(2)}
+   Clanker fees:   ${formatEther(claimedWeth)} WETH + ${formatEther(claimedToken)} ${symbol}
+   LP fees:        ${formatEther(lpWeth)} WETH + ${formatEther(lpToken)} ${symbol}
+   Compounded:     ${cfg.compoundPct}% → LP #${cfg.tokenId || 'N/A'}
+   Harvested:      ${harvestPct}% → ${harvestedUsdc > 0n ? formatUnits(harvestedUsdc, 6) + ' USDC' : 'pending'}
+═══════════════════════════════════════════════════`);
 
-💰 Wallet:
-   WETH: ${formatEther(wethFinal)}
-   ${tokenSymbol}: ${formatEther(tokenFinal)}
-`);
+  return { totalUsd, compounded: cfg.compoundPct, harvested: parseFloat(formatUnits(harvestedUsdc, 6)) };
 }
 
 main().catch(err => { console.error('❌ Fatal:', err.message); process.exit(1); });
