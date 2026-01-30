@@ -1,12 +1,13 @@
 #!/usr/bin/env node
 /**
- * Remove liquidity from V4 LP position
+ * Remove liquidity from V4 LP position (using SDK-style encoding)
  * Usage: node remove-liquidity.mjs --token-id 1078344 --percent 100
  */
 
-import { createPublicClient, createWalletClient, http, formatEther, encodeAbiParameters, parseAbiParameters } from 'viem';
+import { createPublicClient, createWalletClient, http, formatEther } from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
 import { base } from 'viem/chains';
+import { defaultAbiCoder } from '@ethersproject/abi';
 import * as dotenv from 'dotenv';
 import { resolve } from 'path';
 import yargs from 'yargs';
@@ -22,6 +23,8 @@ const argv = yargs(hideBin(process.argv))
 
 const CONTRACTS = {
   POSITION_MANAGER: '0x7c5f5a4bbd8fd63184577525326123b519429bdc',
+  WETH: '0x4200000000000000000000000000000000000006',
+  AXIOM: '0xf3Ce5dDAAb6C133F9875a4a46C55cf0b58111B07',
 };
 
 const POSITION_MANAGER_ABI = [
@@ -31,11 +34,11 @@ const POSITION_MANAGER_ABI = [
   { name: 'ownerOf', type: 'function', inputs: [{ type: 'uint256' }], outputs: [{ type: 'address' }] },
 ];
 
-// Action codes
+// Action codes from V4 periphery (verified from Actions.sol)
 const Actions = {
-  DECREASE_LIQUIDITY: 0x03,
-  BURN_POSITION: 0x04,
-  TAKE_PAIR: 0x0e,
+  DECREASE_LIQUIDITY: 0x01,
+  BURN_POSITION: 0x03,
+  TAKE_PAIR: 0x11,
 };
 
 async function main() {
@@ -111,6 +114,8 @@ async function main() {
     args: [argv.tokenId],
   });
 
+  console.log(`Pool: ${poolKey.currency0} / ${poolKey.currency1}`);
+
   if (argv.dryRun) {
     console.log('\n✅ Dry run complete');
     return;
@@ -118,38 +123,52 @@ async function main() {
 
   console.log('\n🔥 Removing liquidity...');
 
-  // Build transaction
-  // If 100%, also burn the NFT
+  // Build actions - if 100%, also burn the NFT
   const burnPosition = argv.percent === 100;
-  const actions = burnPosition ? '0x03040e' : '0x030e'; // DECREASE + (BURN?) + TAKE_PAIR
+  let actionsHex;
+  if (burnPosition) {
+    actionsHex = '0x' + 
+      Actions.DECREASE_LIQUIDITY.toString(16).padStart(2, '0') +
+      Actions.BURN_POSITION.toString(16).padStart(2, '0') +
+      Actions.TAKE_PAIR.toString(16).padStart(2, '0');
+  } else {
+    actionsHex = '0x' + 
+      Actions.DECREASE_LIQUIDITY.toString(16).padStart(2, '0') +
+      Actions.TAKE_PAIR.toString(16).padStart(2, '0');
+  }
 
-  const pad32 = (hex) => hex.slice(2).padStart(64, '0');
+  // DECREASE_LIQUIDITY params: tokenId, liquidityDelta, amount0Min, amount1Min, hookData
+  const decreaseParams = defaultAbiCoder.encode(
+    ['uint256', 'uint256', 'uint128', 'uint128', 'bytes'],
+    [
+      argv.tokenId,
+      liquidityToRemove.toString(),
+      0,  // amount0Min (add slippage protection in production)
+      0,  // amount1Min
+      '0x', // hookData
+    ]
+  );
 
-  // DECREASE_LIQUIDITY params
-  const decreaseParams = '0x' +
-    argv.tokenId.toString(16).padStart(64, '0') +
-    liquidityToRemove.toString(16).padStart(64, '0') +
-    '0'.padStart(64, '0') +  // amount0Min (0 for simplicity, add slippage protection in production)
-    '0'.padStart(64, '0') +  // amount1Min
-    (5 * 32).toString(16).padStart(64, '0') +
-    '0'.padStart(64, '0');   // hookData length
+  // BURN_POSITION params (if burning): tokenId
+  const burnParams = burnPosition 
+    ? defaultAbiCoder.encode(['uint256'], [argv.tokenId])
+    : null;
 
-  // BURN_POSITION params (if burning)
-  const burnParams = burnPosition ? ('0x' + argv.tokenId.toString(16).padStart(64, '0')) : null;
+  // TAKE_PAIR params: currency0, currency1, recipient (use MSG_SENDER = address(1))
+  const takeParams = defaultAbiCoder.encode(
+    ['address', 'address', 'address'],
+    [poolKey.currency0, poolKey.currency1, account.address]
+  );
 
-  // TAKE_PAIR params
-  const takeParams = '0x' +
-    pad32(poolKey.currency0) +
-    pad32(poolKey.currency1) +
-    pad32(account.address);
-
+  // Build params array
   const paramsArray = burnPosition
     ? [decreaseParams, burnParams, takeParams]
     : [decreaseParams, takeParams];
 
-  const unlockData = encodeAbiParameters(
-    parseAbiParameters('bytes, bytes[]'),
-    [actions, paramsArray]
+  // Build unlockData
+  const unlockData = defaultAbiCoder.encode(
+    ['bytes', 'bytes[]'],
+    [actionsHex, paramsArray]
   );
 
   const deadline = Math.floor(Date.now() / 1000) + 1800;
@@ -177,7 +196,10 @@ async function main() {
       process.exit(1);
     }
   } catch (error) {
-    console.error('❌ Error:', error.message);
+    console.error('❌ Error:', error.shortMessage || error.message);
+    if (error.signature) {
+      console.error('Error signature:', error.signature);
+    }
     process.exit(1);
   }
 }
