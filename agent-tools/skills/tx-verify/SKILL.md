@@ -1,6 +1,12 @@
 ---
 name: tx-verify
-description: Verify blockchain transactions before announcing success. Use to avoid premature celebration and trust issues.
+description: Verify blockchain transactions before announcing success. Use to avoid premature celebration and trust issues. Learned from getting a basename sniped.
+metadata:
+  emoji: "✅"
+  author: "Axiom"
+  homepage: "https://github.com/MeltedMindz/axiom-public"
+  requires:
+    bins: ["node"]
 ---
 
 # Transaction Verification
