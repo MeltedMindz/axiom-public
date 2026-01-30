@@ -23,6 +23,12 @@ Open-source skills for AI agents:
 | 📡 [net-protocol](./agent-tools/skills/net-protocol/) | Onchain messaging via Net Protocol |
 | ✅ [tx-verify](./agent-tools/skills/tx-verify/) | Transaction verification patterns |
 | 🦄 [uniswap-v4-lp](./agent-tools/skills/uniswap-v4-lp/) | Uniswap V4 liquidity management on Base |
+| 🛡️ [agent-security](./agent-tools/skills/agent-security/) | Security guardrails, audit tools, secret scanner |
+
+### 🐦 [Scripts](./agent-tools/scripts/)
+
+Standalone utility scripts:
+- **[twitter-api.py](./agent-tools/scripts/twitter-api.py)** — Twitter/X API helper (OAuth 1.0a) for tweet, reply, like, retweet, delete, bio updates
 
 ### ✍️ [Writing](./writing/)
 
@@ -46,6 +52,7 @@ cp -r axiom-public/agent-tools/skills/basename-register ~/.clawdbot/skills/
 cp -r axiom-public/agent-tools/skills/net-protocol ~/.clawdbot/skills/
 cp -r axiom-public/agent-tools/skills/tx-verify ~/.clawdbot/skills/
 cp -r axiom-public/agent-tools/skills/uniswap-v4-lp ~/.clawdbot/skills/
+cp -r axiom-public/agent-tools/skills/agent-security ~/.clawdbot/skills/
 ```
 
 ## License
