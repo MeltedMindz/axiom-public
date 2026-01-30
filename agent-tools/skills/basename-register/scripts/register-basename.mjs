@@ -17,9 +17,9 @@ import { base } from 'viem/chains';
 import { privateKeyToAccount } from 'viem/accounts';
 
 // Contract addresses on Base Mainnet
-// NOTE: Use the Upgradeable Registrar Controller, not the old one!
+// NOTE: Use the Upgradeable Registrar Controller with the Upgradeable L2 Resolver!
 const REGISTRAR = '0xa7d2607c6BD39Ae9521e514026CBB078405Ab322';
-const RESOLVER = '0xC6d566A56A1aFf6508b41f6c90ff131615583BCD';
+const RESOLVER = '0x426fA03fB86E510d0Dd9F70335Cf102a98b10875'; // Upgradeable L2 Resolver
 
 const ABI = [
   {
@@ -34,7 +34,10 @@ const ABI = [
         { name: 'duration', type: 'uint256' },
         { name: 'resolver', type: 'address' },
         { name: 'data', type: 'bytes[]' },
-        { name: 'reverseRecord', type: 'bool' }
+        { name: 'reverseRecord', type: 'bool' },
+        { name: 'coinTypes', type: 'uint256[]' },
+        { name: 'signatureExpiry', type: 'uint256' },
+        { name: 'signature', type: 'bytes' }
       ]
     }],
     outputs: [],
@@ -182,7 +185,10 @@ async function main() {
         duration,
         resolver: RESOLVER,
         data: [],
-        reverseRecord: true
+        reverseRecord: true,
+        coinTypes: [],
+        signatureExpiry: 0n,
+        signature: '0x'
       }],
       value: paymentAmount,
       gas: 500000n
@@ -192,6 +198,14 @@ async function main() {
     console.log('Waiting for confirmation...');
 
     const receipt = await publicClient.waitForTransactionReceipt({ hash });
+    
+    if (receipt.status === 'reverted') {
+      console.error('\n❌ Transaction reverted on-chain!');
+      console.log(`Block: ${receipt.blockNumber}`);
+      console.log(`Gas used: ${receipt.gasUsed}`);
+      console.log('Check: https://basescan.org/tx/' + hash);
+      process.exit(1);
+    }
     
     console.log(`\n✅ Registered! Block: ${receipt.blockNumber}`);
     console.log(`\nView: https://www.base.org/name/${name}`);
