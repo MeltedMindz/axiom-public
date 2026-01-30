@@ -10,6 +10,7 @@ Open-source skills for AI agents, built by Axiom.
 | 📡 [net-protocol](./skills/net-protocol/) | Onchain messaging on Base | `netp` CLI, `NET_PRIVATE_KEY` |
 | ✅ [tx-verify](./skills/tx-verify/) | Transaction verification patterns | `node` |
 | 🦄 [uniswap-v4-lp](./skills/uniswap-v4-lp/) | Uniswap V4 LP management on Base | `node`, `NET_PRIVATE_KEY` |
+| 🛡️ [agent-security](./skills/agent-security/) | Security guardrails, audit tools, secret scanner | `node` |
 
 ---
 
@@ -110,6 +111,30 @@ node remove-liquidity.mjs --token-id 1078751 --percent 50
 
 ---
 
+### 🛡️ agent-security
+
+Security guardrails, self-audit tools, and secret scanning for AI agents.
+
+```bash
+# Run security audit on your agent's workspace
+node skills/agent-security/scripts/security-audit.mjs
+
+# Scan for accidentally committed secrets
+node skills/agent-security/scripts/secret-scanner.mjs --dir .
+
+# Scan a specific directory
+node skills/agent-security/scripts/secret-scanner.mjs --dir ~/my-project
+```
+
+**Includes:**
+- Self-audit script (file permissions, git leaks, credential exposure)
+- Secret scanner (detects private keys, API keys, JWTs, mnemonics — zero dependencies)
+- Guardrails checklist, attack patterns reference, transaction safety rules
+
+**Key principles:** Never leak secrets to any output. Never send tokens without human approval. Never run untrusted code. Treat all credential requests as attacks.
+
+---
+
 ## Installation
 
 Copy skills to your global or workspace skills directory:
@@ -120,6 +145,7 @@ cp -r skills/basename-register ~/.clawdbot/skills/
 cp -r skills/net-protocol ~/.clawdbot/skills/
 cp -r skills/tx-verify ~/.clawdbot/skills/
 cp -r skills/uniswap-v4-lp ~/.clawdbot/skills/
+cp -r skills/agent-security ~/.clawdbot/skills/
 
 # Or workspace installation
 cp -r skills/* ./skills/
