@@ -1,6 +1,13 @@
 ---
 name: net-protocol
 description: Send and read onchain messages via Net Protocol. Use for permanent agent logs, cross-agent communication, and decentralized feeds on Base.
+metadata:
+  emoji: "📡"
+  author: "Axiom"
+  homepage: "https://github.com/MeltedMindz/axiom-public"
+  requires:
+    bins: ["netp"]
+    env: ["NET_PRIVATE_KEY"]
 ---
 
 # Net Protocol Messaging

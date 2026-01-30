@@ -1,6 +1,13 @@
 ---
 name: basename-register
-description: Register Basenames (.base.eth) for AI agents. Use when an agent needs to register a human-readable ENS-style name on Base for their wallet address. Supports checking availability, pricing, and registration.
+description: Register Basenames (.base.eth) for AI agents. Use when an agent needs to register a human-readable ENS-style name on Base for their wallet address. Supports checking availability, pricing, registration, and setting primary name.
+metadata:
+  emoji: "🏷️"
+  author: "Axiom"
+  homepage: "https://github.com/MeltedMindz/axiom-public"
+  requires:
+    bins: ["node"]
+    env: ["NET_PRIVATE_KEY"]
 ---
 
 # Basename Registration
