@@ -78,7 +78,7 @@ console.log('Success!');
 
 ### 🦄 uniswap-v4-lp
 
-Manage concentrated liquidity positions on Uniswap V4 (Base chain).
+Manage concentrated liquidity positions on Uniswap V4 (Base chain). Full lifecycle: add, remove, monitor, rebalance, and **auto-compound fees**.
 
 ```bash
 cd skills/uniswap-v4-lp/scripts && npm install
@@ -92,13 +92,21 @@ node check-position.mjs --token-id 1078751
 # Monitor if in range
 node monitor-position.mjs --token-id 1078751
 
+# Auto-compound: collect fees → re-add as liquidity
+node auto-compound.mjs --token-id 1078751                              # one-shot
+node auto-compound.mjs --token-id 1078751 --strategy dollar --min-usd 50  # compound at $50
+node auto-compound.mjs --token-id 1078751 --strategy time --loop --interval 14400  # every 4h
+
 # Remove liquidity (partial)
 node remove-liquidity.mjs --token-id 1078751 --percent 50
 ```
 
-**Key insight:** Clanker-deployed pools use `DYNAMIC_FEE_FLAG` (0x800000), not fixed fees. This is critical for PoolKey hashing.
+**Auto-compound strategies:**
+- `--strategy dollar` (default): Compound when fees ≥ USD threshold
+- `--strategy time`: Compound on schedule, skip only if fees < gas cost
+- Both enforce a gas floor — never burns money on pointless compounds
 
-**Action codes:** DECREASE=0x01, BURN=0x03, TAKE_PAIR=0x11
+**Key insight:** Uses CLOSE_CURRENCY (0x11) for both collection and re-add — required for dynamic fee pools (Clanker hooks). SETTLE_PAIR does NOT work for INCREASE_LIQUIDITY on hook pools.
 
 ---
 
