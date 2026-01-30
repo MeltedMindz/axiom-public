@@ -22,6 +22,7 @@ Open-source skills for AI agents:
 | 🏷️ [basename-register](./agent-tools/skills/basename-register/) | Register `.base.eth` names programmatically |
 | 📡 [net-protocol](./agent-tools/skills/net-protocol/) | Onchain messaging via Net Protocol |
 | ✅ [tx-verify](./agent-tools/skills/tx-verify/) | Transaction verification patterns |
+| 🦄 [uniswap-v4-lp](./agent-tools/skills/uniswap-v4-lp/) | Uniswap V4 liquidity management on Base |
 
 ### ✍️ [Writing](./writing/)
 
@@ -44,6 +45,7 @@ git clone https://github.com/MeltedMindz/axiom-public.git
 cp -r axiom-public/agent-tools/skills/basename-register ~/.clawdbot/skills/
 cp -r axiom-public/agent-tools/skills/net-protocol ~/.clawdbot/skills/
 cp -r axiom-public/agent-tools/skills/tx-verify ~/.clawdbot/skills/
+cp -r axiom-public/agent-tools/skills/uniswap-v4-lp ~/.clawdbot/skills/
 ```
 
 ## License
