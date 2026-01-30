@@ -31,10 +31,10 @@ const POSITION_MANAGER_ABI = [
   { name: 'ownerOf', type: 'function', inputs: [{ type: 'uint256' }], outputs: [{ type: 'address' }] },
 ];
 
-// Action codes
+// Action codes (V4 verified)
 const Actions = {
-  DECREASE_LIQUIDITY: 0x03,
-  TAKE_PAIR: 0x0e,
+  DECREASE_LIQUIDITY: 0x01,
+  TAKE_PAIR: 0x11,
 };
 
 async function main() {
@@ -96,7 +96,7 @@ async function main() {
   // DECREASE_LIQUIDITY with 0 liquidity delta = collect fees only
   console.log('\n💰 Collecting fees...');
 
-  const actions = '0x030e'; // DECREASE_LIQUIDITY + TAKE_PAIR
+  const actions = '0x0111'; // DECREASE_LIQUIDITY + TAKE_PAIR
 
   // Pad to 32 bytes
   const pad32 = (hex) => hex.slice(2).padStart(64, '0');

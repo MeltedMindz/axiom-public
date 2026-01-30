@@ -24,6 +24,7 @@ Manage concentrated liquidity positions on Uniswap V4 (Base chain).
 - Remove liquidity / collect fees
 - Monitor position health
 - Rebalance when out of range
+- **Auto-compound** fees back into liquidity (set-and-forget)
 
 ## Requirements
 
@@ -48,6 +49,11 @@ node monitor-position.mjs --token-id <ID>
 
 # Collect fees (without removing liquidity)
 node collect-fees.mjs --token-id <ID>
+
+# Auto-compound fees back into liquidity
+node auto-compound.mjs --token-id <ID>
+node auto-compound.mjs --token-id <ID> --dry-run          # preview only
+node auto-compound.mjs --token-id <ID> --loop --interval 3600  # every hour
 
 # Remove liquidity (partial)
 node remove-liquidity.mjs --token-id <ID> --percent 50
