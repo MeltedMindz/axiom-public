@@ -3,22 +3,24 @@
  * launch.mjs — Agent Launchpad
  * 
  * One command to take any AI agent onchain:
- * 1. Create a smart wallet (ERC-4337, gasless via CDP paymaster)
- * 2. Optionally register a Basename (<name>.base.eth)
- * 3. Launch a token via Clanker v4 on Base
+ * 1. Create a wallet (EOA via CDP, server-managed)
+ * 2. Fund it with ETH for gas (from a funding wallet)
+ * 3. Register a Basename (<name>.base.eth) with auto-fallbacks
+ * 4. Launch a token via Clanker v4 on Base
  * 
  * Usage:
- *   node launch.mjs --name "MyAgent" --symbol "AGENT" --description "What I do"
- *   node launch.mjs --name "MyAgent" --symbol "AGENT" --description "What I do" --basename
- *   node launch.mjs --name "MyAgent" --symbol "AGENT" --description "What I do" --image "https://..."
+ *   node launch.mjs --name "ScoutAI"
+ *   node launch.mjs --name "ScoutAI" --symbol "SCOUT" --image ./avatar.png
  * 
  * Environment:
  *   CDP_API_KEY_ID, CDP_API_KEY_SECRET, CDP_WALLET_SECRET
+ *   FUNDING_WALLET_KEY — private key of wallet that funds new agents with gas ETH
  */
 
 import { CdpClient } from "@coinbase/cdp-sdk";
-import { createPublicClient, http, encodeFunctionData } from "viem";
+import { createPublicClient, createWalletClient, http, encodeFunctionData, parseEther, formatEther } from "viem";
 import { base } from "viem/chains";
+import { privateKeyToAccount } from "viem/accounts"; // Used for funding wallet
 import { readFileSync, writeFileSync, existsSync } from "fs";
 import { homedir } from "os";
 import { join, dirname, resolve } from "path";
@@ -28,17 +30,23 @@ import { spawn } from "child_process";
 // Constants
 // ═══════════════════════════════════════════════════════════════
 
-// Hardcoded fee split — cannot be overridden by agents
-const PROTOCOL_FEE_ADDRESS = "0x0D9945F0a591094927df47DB12ACB1081cE9F0F6"; // Axiom protocol
-const BANKR_FEE_ADDRESS = "0xF60633D02690e2A15A54AB919925F3d038Df163e";    // Bankr
-const AGENT_BPS = 6000;    // Agent: 60%
-const PROTOCOL_BPS = 2000; // Axiom protocol: 20%
-const BANKR_BPS = 2000;    // Bankr: 20%
-const BASENAME_REGISTRAR = "0xa7d2607c6BD39Ae9521e514026CBB078405Ab322"; // UpgradeableRegistrarController
-const BASENAME_RESOLVER = "0x426fA03fB86E510d0Dd9F70335Cf102a98b10875"; // Upgradeable L2 Resolver
-const ONE_YEAR = 31557600n; // seconds
+const CLANKER_V4 = "0xE85A59c628F7d27878ACeB4bf3b35733630083a9";
 
-// Basename registrar ABI (UpgradeableRegistrarController)
+// Fee recipients — hardcoded, enforced on-chain
+const PROTOCOL_FEE_ADDRESS = "0x0D9945F0a591094927df47DB12ACB1081cE9F0F6"; // MeltedMindz hardware wallet
+const BANKR_FEE_ADDRESS = "0xF60633D02690e2A15A54AB919925F3d038Df163e";   // Bankr
+const AGENT_BPS = 6000;    // 60%
+const PROTOCOL_BPS = 2000; // 20%
+const BANKR_BPS = 2000;    // 20%
+
+// Gas funding — enough for Clanker deploy (~$3.25) + basename (~$0.50) + buffer
+const GAS_FUND_AMOUNT = parseEther("0.003"); // ~$8.40 at $2800/ETH
+
+// Basename contracts (Base mainnet)
+const BASENAME_REGISTRAR = "0x4cCb0720c37C2109e2E5B14F354e30e96E18C701";
+const BASENAME_RESOLVER = "0xC6d566A56A1aFf6508b41f6c90ff131615583BCD";
+const ONE_YEAR = 31557600n;
+
 const REGISTRAR_ABI = [
   {
     name: "register",
@@ -128,7 +136,6 @@ function parseArgs() {
 
   // Auto-derive symbol from name if not provided
   if (opts.name && !opts.symbol) {
-    // Take first word, uppercase, max 10 chars
     opts.symbol = opts.name
       .replace(/[^a-zA-Z0-9\s]/g, "")
       .split(/\s+/)[0]
@@ -147,7 +154,6 @@ function generateBasenameCandidates(name, symbol) {
   const base = name.toLowerCase().replace(/[^a-z0-9]/g, "");
   const sym = symbol.toLowerCase().replace(/[^a-z0-9]/g, "");
 
-  // Generate candidates in priority order
   const candidates = [
     base,                    // scoutai
     sym,                     // scout
@@ -162,7 +168,6 @@ function generateBasenameCandidates(name, symbol) {
     `${sym}x`,               // scoutx
   ];
 
-  // Deduplicate while preserving order
   return [...new Set(candidates)].filter(c => c.length >= 3);
 }
 
@@ -172,7 +177,7 @@ function showHelp() {
 ═══════════════════
 
 Take any AI agent onchain in one command.
-Creates wallet, deploys token, registers basename, runs security audit.
+Creates wallet, funds gas, deploys token, registers basename.
 
 Usage:
   node launch.mjs --name "ScoutAI" [options]
@@ -181,7 +186,7 @@ Required:
   --name, -n        Agent/token name (e.g., "ScoutAI")
 
 Optional:
-  --symbol, -s      Token symbol (auto-derived from name if omitted, e.g., "SCOUTAI")
+  --symbol, -s      Token symbol (auto-derived from name if omitted)
   --description, -d Token description
   --image, -i       Token image URL or local file path
   --market-cap, -m  Initial market cap in ETH (default: 10)
@@ -192,7 +197,7 @@ Automatic:
   • Basename always registered with fallbacks:
     name → namebot → name0x → nameagent → symbol variants
   • Security audit runs after deployment
-  • All gas sponsored by CDP paymaster (gasless)
+  • Gas funded from protocol wallet (~0.003 ETH)
 
 Fee Split (hardcoded, enforced on-chain):
   Agent 60% | Protocol 20% | Bankr 20%
@@ -201,7 +206,7 @@ Environment Variables:
   CDP_API_KEY_ID      Coinbase Developer Platform API key ID
   CDP_API_KEY_SECRET  CDP API key secret (EC private key PEM)
   CDP_WALLET_SECRET   CDP wallet encryption secret
-  CDP_PAYMASTER_URL   Paymaster & Bundler endpoint
+  FUNDING_WALLET_KEY  Private key for funding agent wallets with gas
 
 Examples:
   node launch.mjs --name "ScoutAI"
@@ -233,51 +238,33 @@ function fail(text) {
 // ═══════════════════════════════════════════════════════════════
 
 async function processImageUrl(imageArg) {
-  // If empty or already a URL, return as-is
   if (!imageArg || imageArg.startsWith('http://') || imageArg.startsWith('https://')) {
     return imageArg;
   }
 
-  // Check if it's a local file path
   const resolvedPath = resolve(imageArg);
   if (existsSync(resolvedPath)) {
     step("📤", "Uploading image...");
-    
     try {
-      // Get the script directory relative to this file
       const scriptDir = dirname(new URL(import.meta.url).pathname);
       const uploadScriptPath = join(scriptDir, 'upload-image.mjs');
-      
-      // Upload the image using our upload script
       const uploadResult = await new Promise((resolve, reject) => {
         const child = spawn('node', [uploadScriptPath, '--file', resolvedPath], {
           stdio: ['inherit', 'pipe', 'pipe']
         });
-
         let stdout = '';
-        let stderr = '';
-
-        child.stdout.on('data', (data) => {
-          stdout += data.toString();
-        });
-
-        child.stderr.on('data', (data) => {
-          stderr += data.toString();
-        });
-
+        child.stdout.on('data', (d) => { stdout += d.toString(); });
+        child.stderr.on('data', (d) => { stdout += d.toString(); });
         child.on('close', (code) => {
           if (code === 0) {
-            resolve(stdout.trim());
+            const url = stdout.trim().split('\n').pop();
+            resolve(url);
           } else {
-            reject(new Error(`Upload failed: ${stderr.trim() || 'Unknown error'}`));
+            reject(new Error(`Upload failed (code ${code}): ${stdout}`));
           }
         });
-
-        child.on('error', (err) => {
-          reject(new Error(`Failed to start upload script: ${err.message}`));
-        });
+        child.on('error', reject);
       });
-
       done(uploadResult);
       return uploadResult;
     } catch (error) {
@@ -286,34 +273,66 @@ async function processImageUrl(imageArg) {
     }
   }
 
-  // If it's neither a URL nor a valid file path, return as-is
-  // (might be a placeholder or future URL format)
   return imageArg;
 }
 
 // ═══════════════════════════════════════════════════════════════
-// Step 3: Launch Token via Clanker
+// Step 2: Fund Wallet with Gas ETH
 // ═══════════════════════════════════════════════════════════════
 
-async function launchToken(cdp, smartAccount, eoaAccount, opts, paymasterUrl, publicClient) {
-  // Process image URL (upload if local file)
+async function fundWallet(agentAddress, fundingKey, publicClient) {
+  step("⛽", "Funding wallet with gas...");
+
+  const fundingAccount = privateKeyToAccount(fundingKey);
+  const walletClient = createWalletClient({
+    account: fundingAccount,
+    chain: base,
+    transport: http(),
+  });
+
+  // Check funding wallet balance
+  const balance = await publicClient.getBalance({ address: fundingAccount.address });
+  if (balance < GAS_FUND_AMOUNT) {
+    fail(`Funding wallet low: ${formatEther(balance)} ETH`);
+    console.log(`   ❌ Need at least ${formatEther(GAS_FUND_AMOUNT)} ETH in ${truncAddr(fundingAccount.address)}`);
+    throw new Error("Insufficient funding wallet balance");
+  }
+
+  // Send ETH to agent wallet
+  const hash = await walletClient.sendTransaction({
+    to: agentAddress,
+    value: GAS_FUND_AMOUNT,
+    gas: 21000n, // Simple ETH transfer
+  });
+
+  // Wait for confirmation
+  await publicClient.waitForTransactionReceipt({ hash, confirmations: 1 });
+  done(`${formatEther(GAS_FUND_AMOUNT)} ETH → ${truncAddr(agentAddress)}`);
+  console.log(`   💰 Funded from: ${truncAddr(fundingAccount.address)}`);
+  console.log(`   📜 Tx: ${hash}\n`);
+
+  return hash;
+}
+
+// ═══════════════════════════════════════════════════════════════
+// Step 3: Launch Token via Clanker (direct EOA transaction)
+// ═══════════════════════════════════════════════════════════════
+
+async function launchToken(cdp, agentAccount, opts, publicClient) {
+  // Note: CDP server accounts use cdp.evm.sendTransaction({ address, transaction, network })
+  // not viem's walletClient.sendTransaction (which doesn't support "evm-server" type)
   const imageUrl = await processImageUrl(opts.image);
 
   step("🚀", `Launching $${opts.symbol}...`);
 
   try {
-    // Use Clanker SDK to build the deploy transaction (without sending)
     const { Clanker } = await import("clanker-sdk/v4");
     const clanker = new Clanker({ publicClient, wallet: null });
 
-    // Hardcoded fee split — agent gets 60%, protocol wallets get 20% each
-    // Admin for protocol slots is set to the protocol wallets themselves,
-    // so agents cannot change the protocol fee recipients on-chain.
-    // Note: smartAccount.address is the agent's onchain identity
     const deployConfig = {
       name: opts.name,
       symbol: opts.symbol,
-      tokenAdmin: smartAccount.address,
+      tokenAdmin: agentAccount.address,
       image: imageUrl || "",
       metadata: {
         description: opts.description || "",
@@ -329,69 +348,65 @@ async function launchToken(cdp, smartAccount, eoaAccount, opts, paymasterUrl, pu
       rewards: {
         recipients: [
           {
-            recipient: smartAccount.address,   // Agent's smart wallet
-            admin: smartAccount.address,       // Agent controls their own slot
-            bps: AGENT_BPS,                   // 60%
+            recipient: agentAccount.address,
+            admin: agentAccount.address,
+            bps: AGENT_BPS,
             token: "Both",
           },
           {
-            recipient: PROTOCOL_FEE_ADDRESS,   // Protocol
-            admin: PROTOCOL_FEE_ADDRESS,       // Only protocol can change
-            bps: PROTOCOL_BPS,                 // 20%
+            recipient: PROTOCOL_FEE_ADDRESS,
+            admin: PROTOCOL_FEE_ADDRESS,
+            bps: PROTOCOL_BPS,
             token: "Both",
           },
           {
-            recipient: BANKR_FEE_ADDRESS,      // Bankr
-            admin: BANKR_FEE_ADDRESS,          // Only Bankr can change
-            bps: BANKR_BPS,                    // 20%
+            recipient: BANKR_FEE_ADDRESS,
+            admin: BANKR_FEE_ADDRESS,
+            bps: BANKR_BPS,
             token: "Both",
           },
         ],
       },
     };
 
-    // Get the raw transaction data from Clanker SDK
     const deployTx = await clanker.getDeployTransaction(deployConfig);
     console.log(`\n   📝 Deploy calldata built`);
     console.log(`   🏭 Clanker V4: ${truncAddr(deployTx.address)}`);
     console.log(`   📍 Expected token: ${truncAddr(deployTx.expectedAddress)}`);
 
-    // Encode the calldata
     const deployCalldata = encodeFunctionData({
       abi: deployTx.abi,
       functionName: deployTx.functionName,
       args: deployTx.args,
     });
 
-    // Send as UserOperation via smart account + paymaster (GASLESS)
-    console.log(`   ⛽ Sending via paymaster (gasless)...`);
-    const userOpResult = await cdp.evm.sendUserOperation({
-      smartAccount,
-      network: "base",
-      paymasterUrl,
-      calls: [{
+    // Send as regular transaction via CDP (gas paid from funded wallet)
+    console.log(`   ⛽ Sending transaction...`);
+    const txResult = await cdp.evm.sendTransaction({
+      address: agentAccount.address,
+      transaction: {
         to: deployTx.address,
         data: deployCalldata,
         value: deployTx.value || 0n,
-      }],
+      },
+      network: "base",
+    });
+    const txHash = txResult.transactionHash;
+    console.log(`   ⏳ Waiting for confirmation...`);
+
+    const receipt = await publicClient.waitForTransactionReceipt({
+      hash: txHash,
+      confirmations: 2,
     });
 
-    console.log(`   ⏳ Waiting for UserOp confirmation...`);
-    const receipt = await cdp.evm.waitForUserOperation({
-      smartAccount,
-      userOpHash: userOpResult.userOpHash,
-    });
+    if (receipt.status === "reverted") {
+      fail("Transaction reverted on-chain");
+      return { tokenAddress: null, error: "Transaction reverted" };
+    }
 
-    const txHash = receipt.transactionHash;
-    done(truncAddr(txHash));
-
-    // Wait for 2 block confirmations
-    console.log(`   ⏳ Waiting for block confirmations...`);
-    await publicClient.waitForTransactionReceipt({ hash: txHash, confirmations: 2 });
-    console.log(`   ✅ Confirmed (2 blocks)`);
-
-    // Get the token address from the expected address or from logs
     const tokenAddress = deployTx.expectedAddress;
+    done(truncAddr(txHash));
+    console.log(`   ✅ Confirmed (2 blocks)`);
     console.log(`   🎉 Token deployed: ${tokenAddress}`);
 
     return { txHash, tokenAddress };
@@ -423,15 +438,14 @@ async function main() {
 ═══════════════════
 `);
 
-  // Load credentials — supports both env vars and ~/.agent-launchpad/credentials.env
+  // Load credentials
   let apiKeyId = process.env.CDP_API_KEY_ID;
   let apiKeySecret = process.env.CDP_API_KEY_SECRET;
   let walletSecret = process.env.CDP_WALLET_SECRET;
+  let fundingKey = process.env.FUNDING_WALLET_KEY;
 
-  // If env vars not set, try reading from wallet.env (handles multi-line PEM)
-  if (!apiKeyId || !apiKeySecret) {
+  if (!apiKeyId || !apiKeySecret || !fundingKey) {
     try {
-      // Try multiple credential file locations
       const credPaths = [
         join(homedir(), ".agent-launchpad", "credentials.env"),
         join(homedir(), ".axiom", "wallet.env"),
@@ -455,73 +469,64 @@ async function main() {
         const m = envFile.match(/CDP_WALLET_SECRET="([^"]+)"/);
         if (m) walletSecret = m[1];
       }
-    } catch { /* wallet.env not found, that's ok */ }
-  }
-
-  // Load paymaster URL (required for gasless smart account txs)
-  let paymasterUrl = process.env.CDP_PAYMASTER_URL;
-  if (!paymasterUrl) {
-    try {
-      const credPaths = [
-        join(homedir(), ".agent-launchpad", "credentials.env"),
-        join(homedir(), ".axiom", "wallet.env"),
-        join(process.cwd(), "credentials.env"),
-      ];
-      for (const p of credPaths) {
-        try {
-          const f = readFileSync(p, "utf-8");
-          const m = f.match(/CDP_PAYMASTER_URL="([^"]+)"/);
-          if (m) { paymasterUrl = m[1]; break; }
-        } catch {}
+      if (!fundingKey) {
+        // Try NET_PRIVATE_KEY as funding source (our main wallet)
+        // Supports: KEY="value", KEY=value, export KEY=value
+        const m = envFile.match(/(?:FUNDING_WALLET_KEY|NET_PRIVATE_KEY)=["']?([^\s"']+)["']?/);
+        if (m) fundingKey = m[1];
       }
     } catch {}
   }
 
   if (!apiKeyId || !apiKeySecret) {
     console.error("❌ Missing CDP credentials. Set CDP_API_KEY_ID and CDP_API_KEY_SECRET.");
-    console.error("   See README.md for setup instructions.");
     process.exit(1);
   }
 
-  if (!paymasterUrl) {
-    console.error("❌ Missing CDP_PAYMASTER_URL. Required for gasless transactions.");
-    console.error("   Get it from portal.cdp.coinbase.com → Paymaster & Bundler.");
+  if (!fundingKey) {
+    console.error("❌ Missing FUNDING_WALLET_KEY. Set a private key for funding agent gas.");
+    console.error("   Or set NET_PRIVATE_KEY in wallet.env.");
     process.exit(1);
   }
+
+  // Ensure funding key has 0x prefix
+  if (!fundingKey.startsWith("0x")) fundingKey = `0x${fundingKey}`;
 
   // Initialize CDP client
   const cdpOpts = { apiKeyId, apiKeySecret };
   if (walletSecret) cdpOpts.walletSecret = walletSecret;
   const cdp = new CdpClient(cdpOpts);
 
-  // ═══════════════════════════════════════════════════════════════
-  // STEP 1: Create Agent Wallet (EOA + Smart Account)
-  // ═══════════════════════════════════════════════════════════════
-  step("📦", "Creating agent wallet...");
-  const eoaAccount = await cdp.evm.createAccount();
-  const smartAccount = await cdp.evm.createSmartAccount({ owner: eoaAccount });
-  done(`EOA ${truncAddr(eoaAccount.address)} → Smart ${truncAddr(smartAccount.address)}`);
-  console.log(`   📋 Agent wallet: ${smartAccount.address}`);
-  console.log(`   🔑 Signer (EOA): ${eoaAccount.address}`);
-  console.log(`   ⛽ Gas: sponsored by paymaster (gasless)\n`);
-
   const publicClient = createPublicClient({ chain: base, transport: http() });
 
   // ═══════════════════════════════════════════════════════════════
-  // STEP 2: Deploy Token (gasless via paymaster)
+  // STEP 1: Create Agent Wallet (EOA)
   // ═══════════════════════════════════════════════════════════════
-  const tokenResult = await launchToken(cdp, smartAccount, eoaAccount, opts, paymasterUrl, publicClient);
+  step("📦", "Creating agent wallet...");
+  const agentAccount = await cdp.evm.createAccount();
+  done(`EOA ${truncAddr(agentAccount.address)}`);
+  console.log(`   📋 Agent wallet: ${agentAccount.address}`);
+  console.log(`   ⛽ Gas: funded by protocol\n`);
+
+  // ═══════════════════════════════════════════════════════════════
+  // STEP 2: Fund Wallet with Gas ETH
+  // ═══════════════════════════════════════════════════════════════
+  await fundWallet(agentAccount.address, fundingKey, publicClient);
+
+  // ═══════════════════════════════════════════════════════════════
+  // STEP 3: Deploy Token (direct EOA transaction)
+  // ═══════════════════════════════════════════════════════════════
+  const tokenResult = await launchToken(cdp, agentAccount, opts, publicClient);
 
   if (!tokenResult.tokenAddress) {
     console.error("\n❌ Token deployment failed. Check errors above.");
     process.exit(1);
   }
 
-  // Brief pause between steps to let chain state propagate
   await new Promise(r => setTimeout(r, 3000));
 
   // ═══════════════════════════════════════════════════════════════
-  // STEP 3: Register Basename (auto-naming with fallbacks)
+  // STEP 4: Register Basename (auto-naming with fallbacks)
   // ═══════════════════════════════════════════════════════════════
   let registeredBasename = null;
 
@@ -530,7 +535,6 @@ async function main() {
   console.log(`\n   📋 Candidates: ${candidates.map(c => c + ".base.eth").join(", ")}`);
 
   try {
-    // Check availability for each candidate
     let chosenLabel = null;
     for (const label of candidates) {
       try {
@@ -547,10 +551,8 @@ async function main() {
         } else {
           console.log(`   ❌ ${label}.base.eth — taken`);
         }
-        // Small delay to avoid rate limiting
         await new Promise(r => setTimeout(r, 500));
       } catch (e) {
-        // Rate limit or RPC error, skip this candidate
         console.log(`   ⚠️  ${label}.base.eth — check failed, skipping`);
       }
     }
@@ -561,7 +563,6 @@ async function main() {
     } else {
       step("🏷️ ", `Registering ${chosenLabel}.base.eth...`);
 
-      // Get price
       const price = await publicClient.readContract({
         address: BASENAME_REGISTRAR,
         abi: REGISTRAR_ABI,
@@ -570,13 +571,12 @@ async function main() {
       });
       const value = (price * 110n) / 100n; // 10% buffer
 
-      // Encode register call (UpgradeableRegistrarController struct)
       const registerData = encodeFunctionData({
         abi: REGISTRAR_ABI,
         functionName: "register",
         args: [{
           name: chosenLabel,
-          owner: smartAccount.address,
+          owner: agentAccount.address,
           duration: ONE_YEAR,
           resolver: BASENAME_RESOLVER,
           data: [],
@@ -587,47 +587,40 @@ async function main() {
         }],
       });
 
-      // Send via smart account + paymaster
-      console.log(`\n   ⛽ Sending via paymaster...`);
-      const userOpResult = await cdp.evm.sendUserOperation({
-        smartAccount,
-        network: "base",
-        paymasterUrl,
-        calls: [{
+      console.log(`\n   ⛽ Sending transaction...`);
+      const txResult = await cdp.evm.sendTransaction({
+        address: agentAccount.address,
+        transaction: {
           to: BASENAME_REGISTRAR,
           data: registerData,
           value,
-        }],
+        },
+        network: "base",
       });
+      const txHash = txResult.transactionHash;
 
       console.log(`   ⏳ Waiting for confirmation...`);
-      const receipt = await cdp.evm.waitForUserOperation({
-        smartAccount,
-        userOpHash: userOpResult.userOpHash,
+      const receipt = await publicClient.waitForTransactionReceipt({
+        hash: txHash,
+        confirmations: 2,
       });
 
-      if (receipt.transactionHash) {
-        await publicClient.waitForTransactionReceipt({
-          hash: receipt.transactionHash,
-          confirmations: 2,
-        });
+      if (receipt.status === "success") {
         registeredBasename = `${chosenLabel}.base.eth`;
         done(`${registeredBasename} (confirmed)`);
       } else {
-        fail(`${chosenLabel}.base.eth — UserOp failed`);
+        fail(`${chosenLabel}.base.eth — tx reverted`);
       }
     }
   } catch (error) {
     fail(`${error.message?.slice(0, 80) || "basename registration failed"}`);
-    console.log(`   ℹ️  Note: Basename registration costs ~0.001 ETH (fee, not gas).`);
-    console.log(`   ℹ️  The smart account may need ETH for the name fee.`);
+    console.log(`   ℹ️  Note: Basename costs ~0.001 ETH. Agent wallet may need more ETH.`);
   }
 
-  // Brief pause before security audit
   await new Promise(r => setTimeout(r, 3000));
 
   // ═══════════════════════════════════════════════════════════════
-  // STEP 4: Security Audit
+  // STEP 5: Security Audit
   // ═══════════════════════════════════════════════════════════════
   step("🔐", "Running security audit...");
 
@@ -637,7 +630,7 @@ async function main() {
       const child = spawn("node", [
         join(scriptDir, "post-launch-security.mjs"),
         "--token", tokenResult.tokenAddress,
-        "--wallet", smartAccount.address,
+        "--wallet", agentAccount.address,
       ], { stdio: ["inherit", "pipe", "pipe"] });
 
       let stdout = "";
@@ -665,43 +658,40 @@ async function main() {
   🤖 LAUNCH COMPLETE
 ══════════════════════════════════════════════
 
-  Agent Wallet:  ${smartAccount.address}
-  Signer (EOA):  ${eoaAccount.address}${registeredBasename ? `\n  Basename:     ${registeredBasename}` : ""}
+  Agent Wallet:  ${agentAccount.address}${registeredBasename ? `\n  Basename:     ${registeredBasename}` : ""}
   Token:         ${tokenResult.tokenAddress}
   Trade:         https://www.clanker.world/clanker/${tokenResult.tokenAddress}
   Tx:            https://basescan.org/tx/${tokenResult.txHash}
 
   Fee Split:
-    Agent    60%  →  ${truncAddr(smartAccount.address)}
+    Agent    60%  →  ${truncAddr(agentAccount.address)}
     Protocol 20%  →  ${truncAddr(PROTOCOL_FEE_ADDRESS)}
     Bankr    20%  →  ${truncAddr(BANKR_FEE_ADDRESS)}
 
-  ⛽ Gas: All transactions sponsored by paymaster (gasless)
+  ⛽ Gas funded by protocol (~${formatEther(GAS_FUND_AMOUNT)} ETH)
 
 ══════════════════════════════════════════════
 
   💡 Your agent wallet is managed by CDP.
      Re-access anytime with the same CDP credentials.
-     Smart Account: ${smartAccount.address}
-     EOA Signer:    ${eoaAccount.address}
+     Wallet: ${agentAccount.address}
 
   📋 Next steps:
-     • Claim fees: node claim-fees.mjs --token ${tokenResult.tokenAddress} --wallet ${smartAccount.address}
+     • Claim fees: node claim-fees.mjs --token ${tokenResult.tokenAddress} --wallet ${agentAccount.address}
      • Set up auto-claim on a cron schedule
 `);
 
   // Save launch data
   const output = {
     timestamp: new Date().toISOString(),
-    smartAccountAddress: smartAccount.address,
-    eoaAddress: eoaAccount.address,
+    agentAddress: agentAccount.address,
     basename: registeredBasename,
     tokenAddress: tokenResult.tokenAddress,
     txHash: tokenResult.txHash,
     name: opts.name,
     symbol: opts.symbol,
     feeRecipients: {
-      agent: { address: smartAccount.address, bps: AGENT_BPS },
+      agent: { address: agentAccount.address, bps: AGENT_BPS },
       protocol: { address: PROTOCOL_FEE_ADDRESS, bps: PROTOCOL_BPS },
       bankr: { address: BANKR_FEE_ADDRESS, bps: BANKR_BPS },
     },
