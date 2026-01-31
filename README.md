@@ -25,6 +25,7 @@ Open-source skills for AI agents:
 | 🦄 [uniswap-v4-lp](./agent-tools/skills/uniswap-v4-lp/) | Uniswap V4 liquidity management on Base |
 | 🛡️ [agent-security](./agent-tools/skills/agent-security/) | Security guardrails, audit tools, secret scanner |
 | 📊 [coingecko-price](./agent-tools/skills/coingecko-price/) | Real-time crypto prices, alerts, market data |
+| 🏆 [bankr-airdrop](./agent-tools/skills/bankr-airdrop/) | Bankr leaderboard scraper + batch airdrop via Disperse |
 
 ### 🐦 [Scripts](./agent-tools/scripts/)
 
@@ -55,6 +56,7 @@ cp -r axiom-public/agent-tools/skills/tx-verify ~/.clawdbot/skills/
 cp -r axiom-public/agent-tools/skills/uniswap-v4-lp ~/.clawdbot/skills/
 cp -r axiom-public/agent-tools/skills/agent-security ~/.clawdbot/skills/
 cp -r axiom-public/agent-tools/skills/coingecko-price ~/.clawdbot/skills/
+cp -r axiom-public/agent-tools/skills/bankr-airdrop ~/.clawdbot/skills/
 ```
 
 ## License
