@@ -89,6 +89,31 @@ Use `--agent-bps` for simple adjustments or `--rewards` for full custom splits.
   Fee split: Agent 60% | Protocol 40%
 ```
 
+## Post-Launch: Basename Registration
+
+Register a basename for your agent's EOA wallet after token launch:
+
+```bash
+# Check availability
+node scripts/register-basename.mjs --name mybot --check
+
+# Register using CDP credentials
+node scripts/register-basename.mjs --name mybot
+
+# Register with explicit private key
+node scripts/register-basename.mjs --name mybot --key 0x123...
+```
+
+**Requirements:**
+- Agent's CDP EOA needs ~0.001 ETH for gas + registration fee
+- Name must be 3+ characters, alphanumeric only
+- Automatically sets as primary name (reverse record)
+
+**Credentials** (in priority order):
+1. `--key` parameter (explicit private key)
+2. `CDP_PRIVATE_KEY` environment variable
+3. `~/.cdp/credentials.json` or `./cdp_credentials.json`
+
 ## Fee Claiming
 
 After launch, agents can auto-claim their accumulated LP fee rewards:
