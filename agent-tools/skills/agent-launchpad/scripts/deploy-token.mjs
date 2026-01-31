@@ -1,0 +1,220 @@
+#!/usr/bin/env node
+/**
+ * deploy-token.mjs — Deploy a token via Clanker V4 REST API
+ * 
+ * Uses the authenticated API endpoint — no wallet signing needed.
+ * Clanker handles the onchain transaction.
+ * 
+ * Usage:
+ *   node deploy-token.mjs --name "ScoutAI" --symbol "SCOUT" --admin 0x...
+ *   node deploy-token.mjs --name "ScoutAI" --symbol "SCOUT" --admin 0x... --image https://...
+ *   node deploy-token.mjs --name "ScoutAI" --symbol "SCOUT" --admin 0x... --chain unichain
+ * 
+ * Environment:
+ *   CLANKER_API_KEY — Clanker API key (stored in ~/.axiom/wallet.env)
+ */
+
+import { randomBytes } from 'crypto';
+import { readFileSync } from 'fs';
+import { homedir } from 'os';
+import { join } from 'path';
+
+// ═══════════════════════════════════════════════════════════════
+// Fee Configuration — MeltedMindz Agent Launchpad
+// ═══════════════════════════════════════════════════════════════
+
+const PROTOCOL_FEE_ADDRESS = "0x0D9945F0a591094927df47DB12ACB1081cE9F0F6"; // MeltedMindz hardware wallet
+const BANKR_FEE_ADDRESS = "0xF60633D02690e2A15A54AB919925F3d038Df163e";   // Bankr
+
+const CHAIN_IDS = {
+  base: 8453,
+  unichain: 130,
+  arbitrum: 42161,
+};
+
+// ═══════════════════════════════════════════════════════════════
+// Parse Args
+// ═══════════════════════════════════════════════════════════════
+
+function parseArgs() {
+  const args = process.argv.slice(2);
+  const opts = {};
+  for (let i = 0; i < args.length; i++) {
+    if (args[i].startsWith('--')) {
+      const key = args[i].slice(2);
+      opts[key] = args[i + 1] || true;
+      i++;
+    }
+  }
+  return opts;
+}
+
+// ═══════════════════════════════════════════════════════════════
+// Load API Key
+// ═══════════════════════════════════════════════════════════════
+
+function loadApiKey() {
+  let apiKey = process.env.CLANKER_API_KEY;
+  if (apiKey) return apiKey;
+
+  try {
+    const envFile = readFileSync(join(homedir(), '.axiom', 'wallet.env'), 'utf-8');
+    const m = envFile.match(/CLANKER_API_KEY=["']?([^\s"']+)["']?/);
+    if (m) return m[1];
+  } catch {}
+
+  console.error('❌ Missing CLANKER_API_KEY');
+  process.exit(1);
+}
+
+// ═══════════════════════════════════════════════════════════════
+// Deploy
+// ═══════════════════════════════════════════════════════════════
+
+async function deploy(opts) {
+  const apiKey = loadApiKey();
+  const requestKey = randomBytes(16).toString('hex'); // 32 char unique ID
+
+  const chainId = CHAIN_IDS[opts.chain || 'base'] || 8453;
+
+  // Build reward config
+  const agentAllocation = opts['agent-pct'] ? parseInt(opts['agent-pct']) : 60;
+  const protocolAllocation = opts['protocol-pct'] ? parseInt(opts['protocol-pct']) : 20;
+  const bankrAllocation = 100 - agentAllocation - protocolAllocation;
+
+  const rewards = [
+    {
+      admin: opts.admin,
+      recipient: opts.admin,
+      allocation: agentAllocation,
+      rewardsToken: "Both",
+    },
+    {
+      admin: PROTOCOL_FEE_ADDRESS,
+      recipient: PROTOCOL_FEE_ADDRESS,
+      allocation: protocolAllocation,
+      rewardsToken: "Paired",
+    },
+  ];
+
+  if (bankrAllocation > 0) {
+    rewards.push({
+      admin: BANKR_FEE_ADDRESS,
+      recipient: BANKR_FEE_ADDRESS,
+      allocation: bankrAllocation,
+      rewardsToken: "Both",
+    });
+  }
+
+  const body = {
+    token: {
+      name: opts.name,
+      symbol: opts.symbol || opts.name.toUpperCase().slice(0, 5),
+      tokenAdmin: opts.admin,
+      description: opts.description || `${opts.name} — launched via Agent Launchpad`,
+      requestKey,
+      ...(opts.image && { image: opts.image }),
+      ...(opts.socialUrl && { socialMediaUrls: [{ platform: "twitter", url: opts.socialUrl }] }),
+    },
+    rewards,
+    pool: {
+      type: "standard",
+      pairedToken: "0x4200000000000000000000000000000000000006", // WETH
+      initialMarketCap: parseFloat(opts.mcap || '10'), // ETH
+    },
+    fees: {
+      type: opts.feeType || "static",
+      ...(opts.feeType === 'dynamic' 
+        ? { baseFee: parseFloat(opts.baseFee || '0.5'), maxLpFee: parseFloat(opts.maxFee || '5') }
+        : { clankerFee: parseFloat(opts.fee || '1'), pairedFee: parseFloat(opts.fee || '1') }),
+    },
+    chainId,
+  };
+
+  // Optional vault
+  if (opts.vault) {
+    body.vault = {
+      percentage: parseInt(opts.vault),
+      lockupDuration: parseInt(opts.lockup || '30'),
+      vestingDuration: parseInt(opts.vesting || '0'),
+    };
+  }
+
+  console.log(`
+🚀 Agent Launchpad — Token Deploy
+═══════════════════════════════════
+  Name:     ${body.token.name}
+  Symbol:   $${body.token.symbol}
+  Admin:    ${opts.admin}
+  Chain:    ${opts.chain || 'base'} (${chainId})
+  Pool:     ${body.pool.initialMarketCap} ETH starting mcap
+  Fees:     ${body.fees.type} (${body.fees.clankerFee || body.fees.baseFee}%)
+  Rewards:  Agent ${agentAllocation}% | Protocol ${protocolAllocation}% | Bankr ${bankrAllocation}%
+  ${opts.vault ? `Vault:    ${opts.vault}% locked ${opts.lockup || 30}d` : ''}
+`);
+
+  console.log('📡 Deploying via Clanker API...');
+
+  const resp = await fetch('https://www.clanker.world/api/tokens/deploy/v4', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'x-api-key': apiKey,
+    },
+    body: JSON.stringify(body),
+  });
+
+  const data = await resp.json();
+
+  if (resp.ok && data.success) {
+    console.log(`
+✅ TOKEN DEPLOYMENT ENQUEUED
+═══════════════════════════════════
+  Expected Address: ${data.expectedAddress}
+  Request Key:      ${requestKey}
+  
+  Track: https://clanker.world/clanker/${data.expectedAddress}
+  
+  The token will be deployed onchain shortly.
+  Clanker handles the transaction — no gas needed.
+`);
+    return data;
+  } else {
+    console.log(`❌ Deploy failed:`, JSON.stringify(data, null, 2));
+    process.exit(1);
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════
+// Main
+// ═══════════════════════════════════════════════════════════════
+
+const opts = parseArgs();
+
+if (opts.help || !opts.name || !opts.admin) {
+  console.log(`
+Usage: node deploy-token.mjs --name "TokenName" --symbol "TKN" --admin 0x...
+
+Required:
+  --name        Token name
+  --admin       Token admin address (receives 60% LP fees)
+
+Optional:
+  --symbol      Token symbol (default: first 5 chars of name)
+  --description Token description
+  --image       Image URL (or local file path)
+  --socialUrl   Twitter/social URL
+  --chain       base (default) | unichain | arbitrum
+  --mcap        Starting market cap in ETH (default: 10)
+  --fee         Fee percentage for static fees (default: 1%)
+  --feeType     static (default) | dynamic
+  --vault       Vault percentage (0-90)
+  --lockup      Vault lockup days (default: 30, min: 7)
+  --vesting     Vault vesting days (default: 0)
+  --agent-pct   Agent reward % (default: 60)
+  --protocol-pct Protocol reward % (default: 20)
+  `);
+  process.exit(0);
+}
+
+deploy(opts);
