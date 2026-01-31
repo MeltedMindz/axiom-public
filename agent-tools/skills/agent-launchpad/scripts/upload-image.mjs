@@ -12,7 +12,7 @@
  * Supported formats: png, jpg, jpeg, gif, webp
  * 
  * Environment:
- *   PINATA_JWT — Pinata JWT token (or stored in ~/.axiom/wallet.env)
+ *   PINATA_JWT — Pinata JWT token (or stored in ~/.agent-launchpad/credentials.env)
  */
 
 import { readFileSync, existsSync } from "fs";
@@ -36,16 +36,22 @@ function loadPinataJwt() {
   // Check env var first
   if (process.env.PINATA_JWT) return process.env.PINATA_JWT;
 
-  // Fallback to wallet.env
-  const walletEnvPath = join(homedir(), ".axiom", "wallet.env");
-  if (existsSync(walletEnvPath)) {
-    const envFile = readFileSync(walletEnvPath, "utf-8");
-    const match = envFile.match(/PINATA_JWT="([^"]+)"/);
-    if (match) return match[1];
+  // Fallback to credential files
+  const credPaths = [
+    join(homedir(), ".agent-launchpad", "credentials.env"),
+    join(homedir(), ".axiom", "wallet.env"),
+    join(process.cwd(), "credentials.env"),
+  ];
+  for (const p of credPaths) {
+    if (existsSync(p)) {
+      const envFile = readFileSync(p, "utf-8");
+      const match = envFile.match(/PINATA_JWT="([^"]+)"/);
+      if (match) return match[1];
+    }
   }
 
   throw new Error(
-    "Pinata JWT not found. Set PINATA_JWT env var or add to ~/.axiom/wallet.env"
+    "Pinata JWT not found. Set PINATA_JWT env var or add to ~/.agent-launchpad/credentials.env"
   );
 }
 
@@ -93,7 +99,7 @@ Examples:
 Supported formats: ${SUPPORTED_EXTENSIONS.join(', ')}
 
 Environment:
-  PINATA_JWT    Pinata JWT token (or stored in ~/.axiom/wallet.env)
+  PINATA_JWT    Pinata JWT token (or stored in ~/.agent-launchpad/credentials.env)
 `);
 }
 

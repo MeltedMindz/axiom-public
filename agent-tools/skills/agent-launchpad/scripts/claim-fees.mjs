@@ -11,7 +11,7 @@
  * 
  * Environment:
  *   CDP_API_KEY_ID, CDP_API_KEY_SECRET, CDP_WALLET_SECRET
- *   (or stored in ~/.axiom/wallet.env)
+ *   (or stored in ~/.agent-launchpad/credentials.env)
  */
 
 import { CdpClient } from "@coinbase/cdp-sdk";
@@ -79,7 +79,7 @@ Options:
 
 Environment:
   CDP_API_KEY_ID, CDP_API_KEY_SECRET, CDP_WALLET_SECRET
-  (or stored in ~/.axiom/wallet.env)
+  (or stored in ~/.agent-launchpad/credentials.env)
 `);
 }
 
@@ -94,7 +94,16 @@ function loadCdpCreds() {
 
   if (!apiKeyId || !apiKeySecret) {
     try {
-      const envFile = readFileSync(join(homedir(), ".axiom/wallet.env"), "utf-8");
+      const credPaths = [
+        join(homedir(), ".agent-launchpad", "credentials.env"),
+        join(homedir(), ".axiom", "wallet.env"),
+        join(process.cwd(), "credentials.env"),
+      ];
+      let envFile;
+      for (const p of credPaths) {
+        try { envFile = readFileSync(p, "utf-8"); break; } catch {}
+      }
+      if (!envFile) throw new Error("No credential file found");
       if (!apiKeyId) {
         const m = envFile.match(/CDP_API_KEY_ID="([^"]+)"/);
         if (m) apiKeyId = m[1];
