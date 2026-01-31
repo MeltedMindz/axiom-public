@@ -432,6 +432,10 @@ async function launchToken(cdp, eoaAccount, opts) {
 
     if (tokenAddress) {
       console.log(`   ✅ Token deployed: ${tokenAddress}`);
+      // Wait for 2 block confirmations before proceeding
+      console.log(`   ⏳ Waiting for block confirmations...`);
+      await publicClient.waitForTransactionReceipt({ hash: txHash, confirmations: 2 });
+      console.log(`   ✅ Confirmed (2 blocks)`);
     }
 
     return {
@@ -587,6 +591,9 @@ async function main() {
     process.exit(1);
   }
 
+  // Brief pause between steps to let chain state propagate
+  await new Promise(r => setTimeout(r, 3000));
+
   // ═══════════════════════════════════════════════════════════════
   // STEP 3: Register Basename
   // ═══════════════════════════════════════════════════════════════
@@ -643,10 +650,11 @@ async function main() {
           data: registerData,
           value,
         });
-        const receipt = await publicClient.waitForTransactionReceipt({ hash });
+        console.log(`\n   ⏳ Waiting for confirmation...`);
+        const receipt = await publicClient.waitForTransactionReceipt({ hash, confirmations: 2 });
 
         if (receipt.status === "success") {
-          done(`${label}.base.eth`);
+          done(`${label}.base.eth (confirmed)`);
         } else {
           fail(`${label}.base.eth — tx reverted`);
         }
@@ -656,6 +664,9 @@ async function main() {
       console.log(`   ℹ️  Agent may need more ETH for basename registration (~0.001 ETH)`);
     }
   }
+
+  // Brief pause before security audit
+  await new Promise(r => setTimeout(r, 3000));
 
   // ═══════════════════════════════════════════════════════════════
   // STEP 4: Security Audit
