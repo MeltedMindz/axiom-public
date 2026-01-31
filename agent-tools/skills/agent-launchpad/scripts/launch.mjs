@@ -484,7 +484,7 @@ async function main() {
 ═══════════════════
 `);
 
-  // Load credentials — supports both env vars and ~/.axiom/wallet.env
+  // Load credentials — supports both env vars and ~/.agent-launchpad/credentials.env
   let apiKeyId = process.env.CDP_API_KEY_ID;
   let apiKeySecret = process.env.CDP_API_KEY_SECRET;
   let walletSecret = process.env.CDP_WALLET_SECRET;
@@ -492,7 +492,17 @@ async function main() {
   // If env vars not set, try reading from wallet.env (handles multi-line PEM)
   if (!apiKeyId || !apiKeySecret) {
     try {
-      const envFile = readFileSync(join(homedir(), ".axiom/wallet.env"), "utf-8");
+      // Try multiple credential file locations
+      const credPaths = [
+        join(homedir(), ".agent-launchpad", "credentials.env"),
+        join(homedir(), ".axiom", "wallet.env"),
+        join(process.cwd(), "credentials.env"),
+      ];
+      let envFile;
+      for (const p of credPaths) {
+        try { envFile = readFileSync(p, "utf-8"); break; } catch {}
+      }
+      if (!envFile) throw new Error("No credential file found");
       
       if (!apiKeyId) {
         const m = envFile.match(/CDP_API_KEY_ID="([^"]+)"/);

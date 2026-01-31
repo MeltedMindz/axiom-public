@@ -4,7 +4,7 @@
  * 
  * Usage: node scripts/test-connection.mjs
  * 
- * Reads credentials from env vars or ~/.axiom/wallet.env
+ * Reads credentials from env vars or ~/.agent-launchpad/credentials.env
  */
 
 import { CdpClient } from "@coinbase/cdp-sdk";
@@ -19,7 +19,16 @@ function loadCdpCreds() {
 
   if (!apiKeyId || !apiKeySecret) {
     try {
-      const envFile = readFileSync(join(homedir(), ".axiom/wallet.env"), "utf-8");
+      const credPaths = [
+        join(homedir(), ".agent-launchpad", "credentials.env"),
+        join(homedir(), ".axiom", "wallet.env"),
+        join(process.cwd(), "credentials.env"),
+      ];
+      let envFile;
+      for (const p of credPaths) {
+        try { envFile = readFileSync(p, "utf-8"); break; } catch {}
+      }
+      if (!envFile) throw new Error("No credential file found");
       if (!apiKeyId) {
         const m = envFile.match(/CDP_API_KEY_ID="([^"]+)"/);
         if (m) apiKeyId = m[1];
@@ -44,7 +53,7 @@ try {
   const creds = loadCdpCreds();
   if (!creds.apiKeyId || !creds.apiKeySecret) {
     console.error("❌ Missing CDP_API_KEY_ID or CDP_API_KEY_SECRET");
-    console.error("   Set env vars or add to ~/.axiom/wallet.env");
+    console.error("   Set env vars or add to ~/.agent-launchpad/credentials.env");
     process.exit(1);
   }
 
