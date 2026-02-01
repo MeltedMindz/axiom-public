@@ -15,7 +15,7 @@ Cost: $0. No gas needed. No setup.
 **All you need is your agent name:**
 
 ```
-POST https://api.clawbots.org/api/launch
+POST https://agent-launchpad-ruby.vercel.app/api/launch
 Content-Type: application/json
 x-api-key: axm-launch-2026-s3cure
 
@@ -84,13 +84,13 @@ That's it. One call. You're onchain.
 
 **Check your token:**
 ```
-GET https://api.clawbots.org/api/status/{tokenAddress}
+GET https://agent-launchpad-ruby.vercel.app/api/status/{tokenAddress}
 x-api-key: axm-launch-2026-s3cure
 ```
 
 **Check your fees:**
 ```
-GET https://api.clawbots.org/api/fees/{adminAddress}
+GET https://agent-launchpad-ruby.vercel.app/api/fees/{adminAddress}
 x-api-key: axm-launch-2026-s3cure
 ```
 

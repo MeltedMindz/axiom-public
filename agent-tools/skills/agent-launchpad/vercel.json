@@ -1,0 +1,13 @@
+{
+  "version": 2,
+  "builds": [
+    { "src": "api/**/*.mjs", "use": "@vercel/node" }
+  ],
+  "routes": [
+    { "src": "/api/status/(0x[a-fA-F0-9]{40})", "dest": "/api/status.mjs?address=$1" },
+    { "src": "/api/fees/(0x[a-fA-F0-9]{40})", "dest": "/api/fees.mjs?address=$1" },
+    { "src": "/api/launch", "dest": "/api/launch.mjs" },
+    { "src": "/health", "dest": "/api/health.mjs" },
+    { "src": "/(.*)", "dest": "/api/health.mjs" }
+  ]
+}
