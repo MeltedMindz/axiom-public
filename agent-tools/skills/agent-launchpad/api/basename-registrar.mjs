@@ -17,8 +17,8 @@ import { homedir } from "os";
 import { join } from "path";
 
 // Basename contracts (Base mainnet)
-const BASENAME_REGISTRAR = "0x4cCb0720c37C2109e2E5B14F354e30e96E18C701";
-const BASENAME_RESOLVER = "0xC6d566A56A1aFf6508b41f6c90ff131615583BCD";
+const BASENAME_REGISTRAR = "0xa7d2607c6BD39Ae9521e514026CBB078405Ab322"; // Upgradeable Registrar Controller
+const BASENAME_RESOLVER = "0x426fA03fB86E510d0Dd9F70335Cf102a98b10875"; // Upgradeable L2 Resolver
 const ONE_YEAR = 31557600n;
 
 const REGISTRAR_ABI = [
@@ -99,25 +99,35 @@ export async function initProtocol(env) {
   const cdp = new CdpClient(cdpOpts);
   const publicClient = createPublicClient({ chain: base, transport: http() });
 
-  // Get or create protocol smart account
-  let protocolAccount = loadProtocolAccount();
+  // Get or create protocol SMART account (needed for sendUserOperation + paymaster)
+  let saved = loadProtocolAccount();
+  let ownerAccount, smartAccount;
   
-  if (!protocolAccount) {
+  if (!saved || !saved.smartAccountAddress) {
     console.log('🔧 Creating protocol smart account...');
-    const account = await cdp.evm.createAccount({ network: "base" });
-    protocolAccount = { address: account.address, network: "base" };
-    saveProtocolAccount(protocolAccount);
-    console.log(`✅ Protocol account: ${account.address}`);
+    ownerAccount = await cdp.evm.createAccount({ network: "base" });
+    smartAccount = await cdp.evm.createSmartAccount({ owner: ownerAccount });
+    saved = { 
+      ownerAddress: ownerAccount.address, 
+      smartAccountAddress: smartAccount.address, 
+      network: "base" 
+    };
+    saveProtocolAccount(saved);
+    console.log(`✅ Protocol smart account: ${smartAccount.address} (owner: ${ownerAccount.address})`);
+  } else {
+    // Restore account objects from saved addresses
+    ownerAccount = await cdp.evm.getAccount({ address: saved.ownerAddress });
+    smartAccount = await cdp.evm.getSmartAccount({ address: saved.smartAccountAddress, owner: ownerAccount });
   }
 
-  return { cdp, publicClient, protocolAddress: protocolAccount.address };
+  return { cdp, publicClient, protocolAddress: saved.smartAccountAddress, smartAccount };
 }
 
 // ═══════════════════════════════════════════════════════════════
 // Register Basename
 // ═══════════════════════════════════════════════════════════════
 
-export async function registerBasename({ cdp, publicClient, protocolAddress, name, ownerAddress, paymasterUrl }) {
+export async function registerBasename({ cdp, publicClient, protocolAddress, smartAccount, name, ownerAddress, paymasterUrl }) {
   // Check availability
   const isAvailable = await publicClient.readContract({
     address: BASENAME_REGISTRAR,
@@ -159,7 +169,7 @@ export async function registerBasename({ cdp, publicClient, protocolAddress, nam
   // Send via CDP smart account with paymaster (gasless)
   try {
     const txResult = await cdp.evm.sendUserOperation({
-      address: protocolAddress,
+      smartAccount,
       calls: [{
         to: BASENAME_REGISTRAR,
         data: registerData,
@@ -213,12 +223,12 @@ export function generateCandidates(name) {
 // Find and Register (with fallbacks)
 // ═══════════════════════════════════════════════════════════════
 
-export async function findAndRegister({ cdp, publicClient, protocolAddress, name, ownerAddress, paymasterUrl }) {
+export async function findAndRegister({ cdp, publicClient, protocolAddress, smartAccount, name, ownerAddress, paymasterUrl }) {
   const candidates = generateCandidates(name);
 
   for (const candidate of candidates) {
     const result = await registerBasename({
-      cdp, publicClient, protocolAddress,
+      cdp, publicClient, protocolAddress, smartAccount,
       name: candidate,
       ownerAddress,
       paymasterUrl,
