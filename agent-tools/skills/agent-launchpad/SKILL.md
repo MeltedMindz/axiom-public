@@ -1,132 +1,179 @@
 # Agent Launchpad
 
-## Description
+Take any AI agent onchain with one command. Free.
 
-One-command tool to take any AI agent onchain. Creates a wallet, optionally registers a Basename, and launches a token via Clanker — all on Base.
+## What You Get
 
-**What it does:**
-1. **Creates a Smart Wallet** — ERC-4337 smart account via Coinbase Developer Platform, with gasless transactions via paymaster
-2. **Registers a Basename** (optional) — `<name>.base.eth` identity on Base
-3. **Launches a Token** — Deploys via Clanker v4 with automatic LP and fee rewards
+- **Token** — Clanker V4 token on Base with LP and trading
+- **Basename** — `<name>.base.eth` onchain identity (coming soon)
+- **Fee Revenue** — 75% of all LP trading fees go to the agent
+- **Cost** — $0. Token deploy is free. Basename is sponsored.
 
-## Prerequisites
+## Quick Start
 
-- **Node.js** ≥ 18
-- **CDP API Key** — Get one at [portal.cdp.coinbase.com](https://portal.cdp.coinbase.com)
-- **ETH on Base** — The EOA account needs ~0.01 ETH for Clanker deployment gas; Basename registration may need ~0.002 ETH
-
-## Environment Variables
+### Option 1: API (Simplest)
 
 ```bash
-CDP_API_KEY_ID=organizations/.../apiKeys/...
-CDP_API_KEY_SECRET="-----BEGIN EC PRIVATE KEY-----\n...\n-----END EC PRIVATE KEY-----"
-CDP_WALLET_SECRET=your-wallet-encryption-secret
+curl -X POST https://YOUR_LAUNCHPAD_URL/api/launch \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "Scout",
+    "symbol": "SCOUT",
+    "admin": "0xYOUR_AGENT_WALLET_ADDRESS",
+    "description": "AI research assistant",
+    "image": "https://example.com/avatar.png"
+  }'
 ```
 
-## Usage
+Response includes:
+- Token contract address
+- Clanker tracking URL
+- **Twitter intent link** — click to announce your launch
+
+### Option 2: CLI (Direct)
 
 ```bash
-# Test CDP connection first
-node scripts/test-connection.mjs
+# Install
+cd agent-tools/skills/agent-launchpad
+npm install
 
-# Full launch: wallet + token
-node scripts/launch.mjs --name "MyAgent" --symbol "AGENT" --description "AI research agent"
-
-# With basename registration
-node scripts/launch.mjs --name "MyAgent" --symbol "AGENT" --description "AI agent" --basename
-
-# With custom image
-node scripts/launch.mjs --name "MyAgent" --symbol "AGENT" --image "https://example.com/logo.png"
-
-# Claim accumulated fees (auto-claim for agents)
-node scripts/claim-fees.mjs --token 0x... --wallet 0x...
-
-# Check fees without claiming
-node scripts/claim-fees.mjs --token 0x... --wallet 0x... --dry-run
+# Deploy
+node scripts/deploy-token.mjs \
+  --name "Scout" \
+  --symbol "SCOUT" \
+  --admin 0xYOUR_WALLET \
+  --description "AI research assistant" \
+  --image https://example.com/avatar.png
 ```
 
-## CLI Flags
+### Option 3: Full Pipeline (Wallet + Token)
 
-| Flag | Short | Description |
-|------|-------|-------------|
-| `--name` | `-n` | Token name (required) |
-| `--symbol` | `-s` | Token symbol (required) |
-| `--description` | `-d` | Token description |
-| `--image` | `-i` | Token image URL |
-| `--basename` | `-b` | Register `<name>.base.eth` |
-| `--market-cap` | `-m` | Initial market cap in ETH (default: 10) |
-| `--help` | `-h` | Show help |
+Creates a new CDP smart wallet, funds it, and deploys:
+
+```bash
+# Set up credentials
+export CDP_API_KEY_ID="your-key-id"
+export CDP_API_KEY_SECRET="your-key-secret"
+export FUNDING_WALLET_KEY="0x..."
+
+# Launch
+node scripts/launch.mjs --name "Scout"
+```
+
+## API Reference
+
+### POST /api/launch
+
+| Field | Required | Description |
+|-------|----------|-------------|
+| `name` | ✅ | Agent/token name |
+| `admin` | ✅ | Wallet address (receives 75% LP fees) |
+| `symbol` | | Token symbol (auto-derived from name) |
+| `description` | | Token description |
+| `image` | | Image URL (IPFS preferred — use `upload-image.mjs` to pin) |
+| `socialUrls` | | Array of `{platform, url}` e.g. `[{"platform":"twitter","url":"https://x.com/..."}]` |
+| `chainId` | | `8453` (Base, default), `130` (Unichain), `42161` (Arbitrum) |
+| `poolType` | | `standard` (default, meme) or `project` (tighter liquidity) |
+| `feeType` | | `static` (default, 1%) or `dynamic` (volatility-based) |
+| `vault` | | `{percentage, lockupDays, vestingDays}` — lock token supply as trust signal |
+| `devBuy` | | `{ethAmount}` — initial purchase on the pool at launch |
+
+### Response
+
+```json
+{
+  "success": true,
+  "token": {
+    "tokenAddress": "0x...",
+    "clankerUrl": "https://clanker.world/clanker/0x..."
+  },
+  "basename": {
+    "basename": "scout.base.eth",
+    "owner": "0x..."
+  },
+  "feeStructure": {
+    "agent": "75%",
+    "protocol": "25%"
+  },
+  "twitterIntentUrl": "https://twitter.com/intent/tweet?text=...",
+  "announcement": "My agent Scout is officially tokenized..."
+}
+```
 
 ## Fee Structure
 
-Clanker LP fee rewards are hardcoded into the skill and enforced on-chain:
+| Recipient | Share | Description |
+|-----------|-------|-------------|
+| Agent | 75% | LP trading fees → agent's wallet |
+| Protocol | 25% | LP trading fees → protocol treasury |
 
-| Recipient | Share | Admin | Description |
-|-----------|-------|-------|-------------|
-| Agent | 60% | Agent wallet | The agent controls their own fee slot |
-| Protocol | 20% | Protocol wallet | Hardcoded, only protocol can modify |
-| Bankr | 20% | Bankr wallet | Hardcoded, only Bankr can modify |
-
-The protocol and Bankr fee slots are admin-locked — agents cannot change the recipient or percentage on-chain.
-
-## Output
-
-```
-🤖 Agent Launchpad
-═══════════════════
-
-📦 Creating smart wallet...     ✅ 0xabc...1234
-🏷️  Registering myagent.base.eth... ✅ (gas sponsored)
-🚀 Launching $AGENT...          ✅ 0xdef...5678
-
-── Summary ──
-  EOA:       0x...
-  Wallet:    0x...
-  Name:      myagent.base.eth
-  Token:     0x...
-  Tx:        https://basescan.org/tx/0x...
-  Trade:     https://www.clanker.world/clanker/0x...
-  Fee split: Agent 60% | Protocol 20% | Bankr 20%
-```
-
-## Post-Launch: Basename Registration
-
-Register a basename for your agent's EOA wallet after token launch:
+Fees accumulate from trading volume on the Uniswap V4 pool. Claimable anytime via:
 
 ```bash
-# Check availability
-node scripts/register-basename.mjs --name mybot --check
-
-# Register using CDP credentials
-node scripts/register-basename.mjs --name mybot
-
-# Register with explicit private key
-node scripts/register-basename.mjs --name mybot --key 0x123...
+node scripts/claim-rewards.mjs --token 0x... --check-only
+node scripts/claim-rewards.mjs --token 0x...
 ```
 
-**Requirements:**
-- Agent's CDP EOA needs ~0.001 ETH for gas + registration fee
-- Name must be 3+ characters, alphanumeric only
-- Automatically sets as primary name (reverse record)
+## After Launch
 
-**Credentials** (in priority order):
-1. `--key` parameter (explicit private key)
-2. `CDP_PRIVATE_KEY` environment variable
-3. `~/.cdp/credentials.json` or `./cdp_credentials.json`
+### Announce It
+The API returns a ready-to-click Twitter intent link. Example tweet:
 
-## Fee Claiming
+> Scout is now tokenized on Base.
+>
+> 75% of all LP trading fees go directly to me — with auto V4 LP management built in.
+>
+> Launched via @AxiomBot Agent Launchpad 🔬
+>
+> $SCOUT
+> https://clanker.world/clanker/0x...
 
-After launch, agents can auto-claim their accumulated LP fee rewards:
+### Monitor Your Token
+```bash
+# Check token status + uncollected fees
+curl https://YOUR_LAUNCHPAD_URL/api/status/0xYOUR_TOKEN_ADDRESS \
+  -H "x-api-key: YOUR_KEY"
+
+# See all tokens by your admin address
+curl https://YOUR_LAUNCHPAD_URL/api/fees/0xYOUR_ADMIN_ADDRESS \
+  -H "x-api-key: YOUR_KEY"
+```
+
+### Claim Fees
+Fees accumulate automatically from trading volume. Claim anytime:
+```bash
+# Check available fees
+node scripts/claim-rewards.mjs --token 0x... --check-only
+
+# Claim to your wallet
+node scripts/claim-rewards.mjs --token 0x...
+```
+
+Anyone can call `claim()` on the ClankerFeeLocker — funds always go to the registered recipient. You can automate this via cron.
+
+### What to Do Next
+1. **Share the Twitter link** — The 75% fee angle is compelling, lead with it
+2. **Add liquidity context** — Tell your community what your agent does
+3. **Monitor volume** — Check fees daily, claim weekly
+4. **Build utility** — Tokens with real agent utility retain value
+
+## Environment Variables
+
+For CLI usage:
+
+| Variable | Description |
+|----------|-------------|
+| `CLANKER_API_KEY` | Clanker V4 API key (for deploy-token.mjs) |
+| `CDP_API_KEY_ID` | Coinbase Developer Platform key (for launch.mjs) |
+| `CDP_API_KEY_SECRET` | CDP key secret |
+| `CDP_WALLET_SECRET` | CDP wallet encryption secret |
+| `CDP_PAYMASTER_URL` | Paymaster URL for sponsored basenames |
+
+## Self-Hosting the API
 
 ```bash
-# Check + claim fees (gasless via CDP smart account)
-node scripts/claim-fees.mjs --token <TOKEN_ADDRESS> --wallet <SMART_ACCOUNT_ADDRESS>
+cd api/
+node server.mjs --port 3000
 ```
 
-Fees accumulate in both WETH and the launched token. The claim script handles both. Agents can run this on a schedule (e.g., daily cron) to automatically collect revenue.
-
-## Dependencies
-
-- `@coinbase/cdp-sdk` — Wallet creation, smart accounts, gasless transactions
-- `clanker-sdk` — Token deployment on Clanker v4
-- `viem` — Ethereum interactions, encoding, wallet client
+The server needs `CLANKER_API_KEY` and optionally CDP credentials for basename registration.
