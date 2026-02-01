@@ -52,11 +52,10 @@ Deploys a token through [Clanker v4](https://clanker.world):
 
 ### Fee Rewards
 LP trading fees are automatically distributed (hardcoded, enforced on-chain):
-- **60%** → Agent's wallet
-- **20%** → Protocol fee
-- **20%** → Bankr fee
+- **75%** → Agent's wallet
+- **25%** → Protocol fee
 
-The protocol and Bankr fee slots are admin-locked — only the respective wallets can modify their own recipients. Agents cannot override the fee split.
+The protocol fee slot is admin-locked — only the protocol wallet can modify its recipient. Agents cannot override the fee split.
 
 ## Environment Variables
 

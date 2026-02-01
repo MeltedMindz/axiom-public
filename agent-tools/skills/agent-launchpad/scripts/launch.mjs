@@ -33,11 +33,9 @@ import { spawn } from "child_process";
 const CLANKER_V4 = "0xE85A59c628F7d27878ACeB4bf3b35733630083a9";
 
 // Fee recipients — hardcoded, enforced on-chain
-const PROTOCOL_FEE_ADDRESS = "0x0D9945F0a591094927df47DB12ACB1081cE9F0F6"; // MeltedMindz hardware wallet
-const BANKR_FEE_ADDRESS = "0xF60633D02690e2A15A54AB919925F3d038Df163e";   // Bankr
-const AGENT_BPS = 6000;    // 60%
-const PROTOCOL_BPS = 2000; // 20%
-const BANKR_BPS = 2000;    // 20%
+const PROTOCOL_FEE_ADDRESS = "0x0D9945F0a591094927df47DB12ACB1081cE9F0F6"; // Protocol fee wallet
+const AGENT_BPS = 7500;    // 75%
+const PROTOCOL_BPS = 2500; // 25%
 
 // Gas funding — enough for Clanker deploy (~$3.25) + basename (~$0.50) + buffer
 const GAS_FUND_AMOUNT = parseEther("0.003"); // ~$8.40 at $2800/ETH
@@ -200,7 +198,7 @@ Automatic:
   • Gas funded from protocol wallet (~0.003 ETH)
 
 Fee Split (hardcoded, enforced on-chain):
-  Agent 60% | Protocol 20% | Bankr 20%
+  Agent 75% | Protocol 25%
 
 Environment Variables:
   CDP_API_KEY_ID      Coinbase Developer Platform API key ID
@@ -357,13 +355,7 @@ async function launchToken(cdp, agentAccount, opts, publicClient) {
             recipient: PROTOCOL_FEE_ADDRESS,
             admin: PROTOCOL_FEE_ADDRESS,
             bps: PROTOCOL_BPS,
-            token: "Both",
-          },
-          {
-            recipient: BANKR_FEE_ADDRESS,
-            admin: BANKR_FEE_ADDRESS,
-            bps: BANKR_BPS,
-            token: "Both",
+            token: "Paired",
           },
         ],
       },
@@ -664,9 +656,8 @@ async function main() {
   Tx:            https://basescan.org/tx/${tokenResult.txHash}
 
   Fee Split:
-    Agent    60%  →  ${truncAddr(agentAccount.address)}
-    Protocol 20%  →  ${truncAddr(PROTOCOL_FEE_ADDRESS)}
-    Bankr    20%  →  ${truncAddr(BANKR_FEE_ADDRESS)}
+    Agent    75%  →  ${truncAddr(agentAccount.address)}
+    Protocol 25%  →  ${truncAddr(PROTOCOL_FEE_ADDRESS)}
 
   ⛽ Gas funded by protocol (~${formatEther(GAS_FUND_AMOUNT)} ETH)
 
@@ -693,9 +684,8 @@ async function main() {
     feeRecipients: {
       agent: { address: agentAccount.address, bps: AGENT_BPS },
       protocol: { address: PROTOCOL_FEE_ADDRESS, bps: PROTOCOL_BPS },
-      bankr: { address: BANKR_FEE_ADDRESS, bps: BANKR_BPS },
     },
-    feeSplit: "Agent 60% / Protocol 20% / Bankr 20%",
+    feeSplit: "Agent 75% / Protocol 25%",
     clankerUrl: `https://www.clanker.world/clanker/${tokenResult.tokenAddress}`,
     basescanUrl: `https://basescan.org/tx/${tokenResult.txHash}`,
   };

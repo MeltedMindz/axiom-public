@@ -1,19 +1,41 @@
 {
-  "name": "agent-launchpad",
-  "version": "1.0.0",
-  "description": "One-command tool to take any AI agent onchain: wallet + basename + token",
-  "main": "scripts/launch.mjs",
+  "name": "@axiombot/agent-launchpad",
+  "version": "2.0.1",
+  "description": "Take any AI agent onchain with one command. Free token launch + basename on Base.",
+  "main": "api/server.mjs",
   "type": "module",
+  "bin": {
+    "agent-launchpad": "bin/cli.mjs"
+  },
   "scripts": {
-    "launch": "node scripts/launch.mjs",
+    "start": "node api/server.mjs",
+    "launch": "node scripts/deploy-token.mjs",
+    "serve": "node api/server.mjs",
     "test": "node scripts/test-connection.mjs"
   },
-  "keywords": ["agent", "onchain", "base", "clanker", "cdp"],
-  "author": "MeltedMindz",
+  "keywords": [
+    "agent",
+    "ai-agent",
+    "onchain",
+    "base",
+    "clanker",
+    "token-launch",
+    "cdp",
+    "basename",
+    "uniswap-v4",
+    "lp-management"
+  ],
+  "author": "0xAxiom",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/0xAxiom/axiom-public"
+  },
+  "homepage": "https://github.com/0xAxiom/axiom-public/tree/main/agent-tools/skills/agent-launchpad",
   "dependencies": {
-    "@coinbase/cdp-sdk": "1.44.0",
-    "clanker-sdk": "4.2.10",
-    "viem": "2.45.1"
+    "@coinbase/cdp-sdk": "^1.44.0",
+    "clanker-sdk": "^4.2.10",
+    "sharp": "^0.33.0",
+    "viem": "^2.45.1"
   }
 }

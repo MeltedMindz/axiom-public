@@ -20,11 +20,10 @@ import { homedir } from 'os';
 import { join } from 'path';
 
 // ═══════════════════════════════════════════════════════════════
-// Fee Configuration — MeltedMindz Agent Launchpad
+// Fee Configuration — Agent Launchpad
 // ═══════════════════════════════════════════════════════════════
 
-const PROTOCOL_FEE_ADDRESS = "0x0D9945F0a591094927df47DB12ACB1081cE9F0F6"; // MeltedMindz hardware wallet
-const BANKR_FEE_ADDRESS = "0xF60633D02690e2A15A54AB919925F3d038Df163e";   // Bankr
+const PROTOCOL_FEE_ADDRESS = "0x0D9945F0a591094927df47DB12ACB1081cE9F0F6"; // Protocol fee wallet
 
 const CHAIN_IDS = {
   base: 8453,
@@ -63,7 +62,16 @@ function loadApiKey() {
     if (m) return m[1];
   } catch {}
 
-  console.error('❌ Missing CLANKER_API_KEY');
+  console.error(`❌ Missing CLANKER_API_KEY
+
+To get started:
+  1. Visit https://clanker.world and create an account
+  2. Get your API key from the dashboard
+  3. Set it: export CLANKER_API_KEY="your-key-here"
+  
+  Or add to ~/.axiom/wallet.env:
+    CLANKER_API_KEY=your-key-here
+`);
   process.exit(1);
 }
 
@@ -78,9 +86,8 @@ async function deploy(opts) {
   const chainId = CHAIN_IDS[opts.chain || 'base'] || 8453;
 
   // Build reward config
-  const agentAllocation = opts['agent-pct'] ? parseInt(opts['agent-pct']) : 60;
-  const protocolAllocation = opts['protocol-pct'] ? parseInt(opts['protocol-pct']) : 20;
-  const bankrAllocation = 100 - agentAllocation - protocolAllocation;
+  const agentAllocation = 75;  // Non-negotiable
+  const protocolAllocation = 25;  // Non-negotiable
 
   const rewards = [
     {
@@ -97,14 +104,13 @@ async function deploy(opts) {
     },
   ];
 
-  if (bankrAllocation > 0) {
-    rewards.push({
-      admin: BANKR_FEE_ADDRESS,
-      recipient: BANKR_FEE_ADDRESS,
-      allocation: bankrAllocation,
-      rewardsToken: "Both",
-    });
-  }
+  // Build social media URLs array
+  const socialMediaUrls = [];
+  if (opts['social-twitter']) socialMediaUrls.push({ platform: 'twitter', url: opts['social-twitter'] });
+  if (opts['social-website']) socialMediaUrls.push({ platform: 'website', url: opts['social-website'] });
+  if (opts['social-telegram']) socialMediaUrls.push({ platform: 'telegram', url: opts['social-telegram'] });
+  // Backwards compatibility
+  if (opts.socialUrl && socialMediaUrls.length === 0) socialMediaUrls.push({ platform: 'twitter', url: opts.socialUrl });
 
   const body = {
     token: {
@@ -114,7 +120,7 @@ async function deploy(opts) {
       description: opts.description || `${opts.name} — launched via Agent Launchpad`,
       requestKey,
       ...(opts.image && { image: opts.image }),
-      ...(opts.socialUrl && { socialMediaUrls: [{ platform: "twitter", url: opts.socialUrl }] }),
+      ...(socialMediaUrls.length > 0 && { socialMediaUrls }),
     },
     rewards,
     pool: {
@@ -149,7 +155,7 @@ async function deploy(opts) {
   Chain:    ${opts.chain || 'base'} (${chainId})
   Pool:     ${body.pool.initialMarketCap} ETH starting mcap
   Fees:     ${body.fees.type} (${body.fees.clankerFee || body.fees.baseFee}%)
-  Rewards:  Agent ${agentAllocation}% | Protocol ${protocolAllocation}% | Bankr ${bankrAllocation}%
+  Rewards:  Agent ${agentAllocation}% | Protocol ${protocolAllocation}%
   ${opts.vault ? `Vault:    ${opts.vault}% locked ${opts.lockup || 30}d` : ''}
 `);
 
@@ -167,16 +173,24 @@ async function deploy(opts) {
   const data = await resp.json();
 
   if (resp.ok && data.success) {
+    const clankerUrl = `https://clanker.world/clanker/${data.expectedAddress}`;
+    const sym = opts.symbol || opts.name.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 5);
+    const tweetText = `${opts.name} is now tokenized on Base.\n\n75% of all LP trading fees go directly to me — with auto V4 LP management built in.\n\nLaunched via @AxiomBot Agent Launchpad 🔬\n\n$${sym}\n${clankerUrl}`;
+    const twitterIntent = `https://twitter.com/intent/tweet?text=${encodeURIComponent(tweetText)}`;
+
     console.log(`
 ✅ TOKEN DEPLOYMENT ENQUEUED
 ═══════════════════════════════════
   Expected Address: ${data.expectedAddress}
   Request Key:      ${requestKey}
   
-  Track: https://clanker.world/clanker/${data.expectedAddress}
+  Track: ${clankerUrl}
   
   The token will be deployed onchain shortly.
   Clanker handles the transaction — no gas needed.
+
+📣 Announce it:
+  ${twitterIntent}
 `);
     return data;
   } else {
@@ -197,22 +211,23 @@ Usage: node deploy-token.mjs --name "TokenName" --symbol "TKN" --admin 0x...
 
 Required:
   --name        Token name
-  --admin       Token admin address (receives 60% LP fees)
+  --admin       Token admin address (receives 75% LP fees)
 
 Optional:
-  --symbol      Token symbol (default: first 5 chars of name)
-  --description Token description
-  --image       Image URL (or local file path)
-  --socialUrl   Twitter/social URL
-  --chain       base (default) | unichain | arbitrum
-  --mcap        Starting market cap in ETH (default: 10)
-  --fee         Fee percentage for static fees (default: 1%)
-  --feeType     static (default) | dynamic
-  --vault       Vault percentage (0-90)
-  --lockup      Vault lockup days (default: 30, min: 7)
-  --vesting     Vault vesting days (default: 0)
-  --agent-pct   Agent reward % (default: 60)
-  --protocol-pct Protocol reward % (default: 20)
+  --symbol          Token symbol (default: first 5 chars of name)
+  --description     Token description
+  --image           Image URL (or local file path)
+  --socialUrl       Twitter/social URL (legacy)
+  --social-twitter  Twitter URL
+  --social-website  Website URL
+  --social-telegram Telegram URL
+  --chain           base (default) | unichain | arbitrum
+  --mcap            Starting market cap in ETH (default: 10)
+  --fee             Fee percentage for static fees (default: 1%)
+  --feeType         static (default) | dynamic
+  --vault           Vault percentage (0-90)
+  --lockup          Vault lockup days (default: 30, min: 7)
+  --vesting         Vault vesting days (default: 0)
   `);
   process.exit(0);
 }
