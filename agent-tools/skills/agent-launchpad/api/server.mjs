@@ -27,6 +27,22 @@ import { join } from 'path';
 import { initProtocol, findAndRegister } from './basename-registrar.mjs';
 
 // ═══════════════════════════════════════════════════════════════
+// Wallet Creation (Local — pure viem, no API dependency)
+// ═══════════════════════════════════════════════════════════════
+
+async function createAgentWallet() {
+  const { generatePrivateKey, privateKeyToAccount } = await import('viem/accounts');
+  const privateKey = generatePrivateKey();
+  const account = privateKeyToAccount(privateKey);
+  console.log(`🔑 Created local wallet: ${account.address}`);
+  return { 
+    success: true, 
+    address: account.address, 
+    privateKey,
+  };
+}
+
+// ═══════════════════════════════════════════════════════════════
 // Config
 // ═══════════════════════════════════════════════════════════════
 
@@ -147,9 +163,11 @@ function validateLaunchInput(body) {
   if (!body.name) errors.push('Missing: name');
   else if (body.name.length > MAX_NAME_LENGTH) errors.push(`name too long (max ${MAX_NAME_LENGTH})`);
   
-  if (!body.admin) errors.push('Missing: admin (0x address)');
-  else if (!/^0x[a-fA-F0-9]{40}$/.test(body.admin)) errors.push('Invalid admin address');
-  else if (body.admin === '0x0000000000000000000000000000000000000000') errors.push('admin cannot be zero address');
+  if (body.admin) {
+    if (!/^0x[a-fA-F0-9]{40}$/.test(body.admin)) errors.push('Invalid admin address');
+    else if (body.admin === '0x0000000000000000000000000000000000000000') errors.push('admin cannot be zero address');
+  }
+  // admin is optional — if missing, we create a wallet for the agent
   
   if (body.symbol && body.symbol.length > MAX_SYMBOL_LENGTH) errors.push(`symbol too long (max ${MAX_SYMBOL_LENGTH})`);
   if (body.description && body.description.length > MAX_DESCRIPTION_LENGTH) errors.push(`description too long (max ${MAX_DESCRIPTION_LENGTH})`);
@@ -326,6 +344,7 @@ async function getTokensByAdmin(admin) {
 // ═══════════════════════════════════════════════════════════════
 
 async function handleLaunch(body) {
+  try {
   const errors = validateLaunchInput(body);
   if (errors.length > 0) {
     return { status: 400, body: { error: 'Validation failed', details: errors } };
@@ -337,6 +356,24 @@ async function handleLaunch(body) {
   const sanitizedDescription = sanitizeString(body.description);
 
   const results = { name: sanitizedName, admin: body.admin };
+
+  // Step 0: Create wallet if agent doesn't have one
+  if (!body.admin) {
+    console.log(`🔑 No admin address — creating wallet for ${sanitizedName}...`);
+    try {
+      const wallet = await createAgentWallet();
+      results.admin = wallet.address;
+      results.wallet = {
+        success: true,
+        address: wallet.address,
+        privateKey: wallet.privateKey,
+        warning: 'SAVE THIS PRIVATE KEY. It is the ONLY way to access your wallet and claim your 75% LP fees. We do not store it.',
+      };
+      body.admin = wallet.address;
+    } catch (e) {
+      return { status: 500, body: { error: 'Wallet creation failed', details: e.message, hint: 'Provide your own admin address in the request body' } };
+    }
+  }
 
   // Step 1: Deploy token (free via Clanker API)
   console.log(`🚀 Launching ${sanitizedName} for ${body.admin.slice(0, 8)}...`);
@@ -361,19 +398,24 @@ async function handleLaunch(body) {
 
   // Step 2: Register basename (sponsored via CDP paymaster — free)
   if (body.basename !== false) {
-    const proto = await ensureProtocol();
-    if (proto) {
-      const baseName = body.basename || sanitizedName.toLowerCase().replace(/[^a-z0-9]/g, '');
-      console.log(`🏷️  Registering ${baseName}.base.eth for ${body.admin.slice(0, 8)}...`);
-      const basename = await findAndRegister({
-        ...proto,
-        name: baseName,
-        ownerAddress: body.admin,
-        paymasterUrl: ENV.CDP_PAYMASTER_URL,
-      });
-      results.basename = basename;
-    } else {
-      results.basename = { success: false, note: 'Basename registration not configured' };
+    try {
+      const proto = await ensureProtocol();
+      if (proto) {
+        const baseName = body.basename || sanitizedName.toLowerCase().replace(/[^a-z0-9]/g, '');
+        console.log(`🏷️  Registering ${baseName}.base.eth for ${body.admin.slice(0, 8)}...`);
+        const basename = await findAndRegister({
+          ...proto,
+          name: baseName,
+          ownerAddress: body.admin,
+          paymasterUrl: ENV.CDP_PAYMASTER_URL,
+        });
+        results.basename = basename;
+      } else {
+        results.basename = { success: false, note: 'Basename registration not configured' };
+      }
+    } catch (e) {
+      console.error(`⚠️  Basename registration failed (non-fatal): ${e.message}`);
+      results.basename = { success: false, error: e.message, note: 'Token deployed successfully — basename failed but can be retried' };
     }
   }
 
@@ -415,6 +457,10 @@ async function handleLaunch(body) {
       ],
     },
   };
+  } catch (e) {
+    console.error(`❌ Launch failed unexpectedly: ${e.message}`);
+    return { status: 500, body: { error: 'Internal server error', details: e.message } };
+  }
 }
 
 // ═══════════════════════════════════════════════════════════════

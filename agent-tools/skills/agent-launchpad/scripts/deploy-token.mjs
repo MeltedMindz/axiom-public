@@ -115,7 +115,7 @@ async function deploy(opts) {
   const body = {
     token: {
       name: opts.name,
-      symbol: opts.symbol || opts.name.toUpperCase().slice(0, 5),
+      symbol: opts.symbol || opts.name.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 5),
       tokenAdmin: opts.admin,
       description: opts.description || `${opts.name} — launched via Agent Launchpad`,
       requestKey,
