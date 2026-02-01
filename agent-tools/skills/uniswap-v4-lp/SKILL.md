@@ -343,6 +343,82 @@ Compound   Harvest
 
 Set up a cron job with `--min-usd` threshold and the agent only acts when it's profitable to do so.
 
+## LP Range Alert
+
+Monitor your positions and get alerted when price moves near or out of range.
+
+### Quick Start
+
+```bash
+# Check single position
+node lp-range-alert.mjs --positions 1078751
+
+# Check multiple positions
+node lp-range-alert.mjs --positions 1078751,1078720,1078695
+
+# Dry run (check without saving state)
+node lp-range-alert.mjs --positions 1078751 --dry-run
+
+# JSON output (for cron/automation)
+node lp-range-alert.mjs --positions 1078751 --json
+
+# Custom alert threshold (alert at 20% from edge instead of 15%)
+node lp-range-alert.mjs --positions 1078751 --near-edge-pct 20
+
+# Force alert even if status unchanged
+node lp-range-alert.mjs --positions 1078751 --force
+```
+
+### Config File
+
+For cron jobs, use a JSON config (`lp-alert-config.example.json`):
+
+```json
+{
+  "positions": ["1078751", "1078720", "1078695"],
+  "telegramChat": "YOUR_CHAT_ID",
+  "nearEdgePercent": 15,
+  "rpcUrl": "https://mainnet.base.org"
+}
+```
+
+Run with: `node lp-range-alert.mjs --config lp-alert-config.json`
+
+### Alert Statuses
+
+| Status | Meaning | Action |
+|--------|---------|--------|
+| `OK` | In range, healthy | None needed |
+| `NEAR_LOWER_EDGE` | Within 15% of lower bound | Monitor, prepare to rebalance down |
+| `NEAR_UPPER_EDGE` | Within 15% of upper bound | Monitor, prepare to rebalance up |
+| `OUT_OF_RANGE` | Price outside position range | **Rebalance immediately** (not earning fees!) |
+
+### State Persistence
+
+State is saved to `~/.lp-alert-state.json` to prevent duplicate alerts.
+- Only alerts on status **changes** (not on every check)
+- Use `--force` to alert regardless of previous state
+
+### Flags
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--positions` | required | Comma-separated token IDs |
+| `--config` | optional | JSON config file path |
+| `--telegram-chat` | optional | Chat ID for Telegram alerts |
+| `--near-edge-pct` | 15 | Alert threshold (% from edge) |
+| `--dry-run` | false | Check without saving state |
+| `--json` | false | JSON output |
+| `--force` | false | Alert even if status unchanged |
+| `--rpc` | env/default | Custom RPC URL |
+
+### Recommended Cron Setup
+
+```bash
+# Check every 30 minutes
+*/30 * * * * cd /path/to/scripts && node lp-range-alert.mjs --config lp-alert-config.json >> /tmp/lp-alerts.log 2>&1
+```
+
 ## Position Strategy Recommendations
 
 For ~$20-1000 positions:

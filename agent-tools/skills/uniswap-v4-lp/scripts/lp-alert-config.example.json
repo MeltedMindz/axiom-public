@@ -1,0 +1,6 @@
+{
+  "positions": ["1078751", "1078720", "1078695"],
+  "telegramChat": "YOUR_CHAT_ID",
+  "nearEdgePercent": 15,
+  "rpcUrl": "https://mainnet.base.org"
+}
