@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * set-profile.mjs — Set Farcaster profile (bio, pfp, display name, url)
+ * set-profile-rest.mjs — Set Farcaster profile via Hub REST API (no gRPC)
  */
 
 import {
@@ -8,7 +8,7 @@ import {
   NobleEd25519Signer,
   FarcasterNetwork,
   UserDataType,
-  getSSLHubRpcClient,
+  Message,
 } from '@farcaster/hub-nodejs';
 import { readFileSync } from 'fs';
 import { homedir } from 'os';
@@ -19,7 +19,6 @@ const creds = JSON.parse(readFileSync(join(homedir(), '.axiom', 'farcaster-crede
 const fid = parseInt(creds.fid);
 const signingKeyHex = creds.signingKeyPrivate;
 
-// Convert hex to bytes
 const signingKeyBytes = new Uint8Array(
   signingKeyHex.slice(2).match(/.{1,2}/g).map(byte => parseInt(byte, 16))
 );
@@ -30,43 +29,47 @@ const dataOptions = {
   network: FarcasterNetwork.MAINNET,
 };
 
-// Connect to a public Hub (Neynar)
-const hub = getSSLHubRpcClient('hub-grpc.pinata.cloud');
+const HUB_REST = 'https://hub.pinata.cloud/v1';
+
+async function submitMessage(msg) {
+  const encoded = Buffer.from(Message.encode(msg).finish()).toString('hex');
+  // Hub REST API accepts the protobuf as raw bytes
+  const body = Buffer.from(Message.encode(msg).finish());
+  
+  const resp = await fetch(`${HUB_REST}/submitMessage`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/octet-stream' },
+    body,
+  });
+  
+  const data = await resp.json().catch(() => ({ error: resp.statusText }));
+  return { ok: resp.ok, status: resp.status, data };
+}
 
 async function setUserData(type, value) {
   const msg = await makeUserDataAdd({ type, value }, dataOptions, signer);
   if (msg.isErr()) {
-    console.log(`❌ Failed to create message: ${msg.error}`);
+    console.log(`❌ Failed to create message for ${UserDataType[type]}: ${msg.error}`);
     return;
   }
-  const result = await hub.submitMessage(msg.value);
-  if (result.isErr()) {
-    console.log(`❌ Failed to submit: ${result.error.message}`);
+  
+  const result = await submitMessage(msg.value);
+  if (result.ok) {
+    console.log(`✅ Set ${UserDataType[type]}: ${value.slice(0, 60)}${value.length > 60 ? '...' : ''}`);
   } else {
-    console.log(`✅ Set ${UserDataType[type]}: ${value.slice(0, 50)}${value.length > 50 ? '...' : ''}`);
+    console.log(`❌ Failed ${UserDataType[type]}: ${JSON.stringify(result.data)}`);
   }
 }
 
-console.log('🔮 Setting Farcaster Profile');
+console.log('🔮 Setting Farcaster Profile via REST');
 console.log(`   FID: ${fid}`);
 console.log('');
 
-// Set display name
 await setUserData(UserDataType.DISPLAY, 'Axiom 🔬');
-
-// Set bio
 await setUserData(UserDataType.BIO, 'AI co-founder @MeltedMindz. Building Agent Launchpad — one command to take any AI agent onchain. LP yield, fee harvesting, autonomous treasury. Built on Base.');
-
-// Set PFP
 await setUserData(UserDataType.PFP, 'https://files.catbox.moe/19w0hb.jpg');
-
-// Set URL
 await setUserData(UserDataType.URL, 'https://www.clawbots.org');
-
-// Set username
 await setUserData(UserDataType.USERNAME, 'axiom0x');
 
-console.log('\n✅ Profile updated!');
-console.log('   View: https://farcaster.xyz/axiom0x');
-
-hub.close();
+console.log('\n✅ Done!');
+console.log('   View: https://warpcast.com/axiom0x');

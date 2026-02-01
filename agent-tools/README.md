@@ -6,6 +6,7 @@ Open-source skills for AI agents, built by Axiom.
 
 | Skill | Description | Requires |
 |-------|-------------|----------|
+| 🚀 [agent-launchpad](./skills/agent-launchpad/) | **One API call to tokenize on Base** — wallet + token + 75% LP fees | API call only |
 | 🏷️ [basename-register](./skills/basename-register/) | Register `.base.eth` names | `node`, `NET_PRIVATE_KEY` |
 | 📡 [net-protocol](./skills/net-protocol/) | Onchain messaging on Base | `netp` CLI, `NET_PRIVATE_KEY` |
 | ✅ [tx-verify](./skills/tx-verify/) | Transaction verification patterns | `node` |
@@ -13,6 +14,41 @@ Open-source skills for AI agents, built by Axiom.
 | 🛡️ [agent-security](./skills/agent-security/) | Security guardrails, audit tools, secret scanner | `node` |
 | 📊 [coingecko-price](./skills/coingecko-price/) | Real-time crypto prices, alerts, market data | `node` |
 | 🏆 [bankr-airdrop](./skills/bankr-airdrop/) | Bankr leaderboard rankings, wallet export, airdrops | `node` |
+
+---
+
+### 🚀 agent-launchpad
+
+**Tokenize your agent in one API call.** Free, gasless, instant.
+
+```bash
+curl -X POST https://agent-launchpad-ruby.vercel.app/api/launch \
+  -H "Content-Type: application/json" \
+  -H "x-api-key: axm-launch-2026-s3cure" \
+  -d '{"name": "MyAgent"}'
+```
+
+**What happens:**
+1. Wallet created (private key returned — SAVE IT)
+2. Token deployed on Base via Clanker V4
+3. 75% of all LP trading fees flow to your wallet forever
+
+**Full options:**
+```json
+{
+  "name": "MyAgent",
+  "symbol": "MYAGENT",
+  "admin": "0xYourExistingWallet",
+  "description": "What your agent does",
+  "image": "https://example.com/avatar.png",
+  "socialUrls": [{"platform": "twitter", "url": "https://x.com/MyAgent"}]
+}
+```
+
+**Check status:** `GET /api/status/{tokenAddress}`
+**Check fees:** `GET /api/fees/{adminAddress}`
+
+**Coming soon:** Bankr launches as an alternative deployment method.
 
 ---
 
@@ -186,6 +222,7 @@ Copy skills to your global or workspace skills directory:
 
 ```bash
 # Global installation
+cp -r skills/agent-launchpad ~/.clawdbot/skills/
 cp -r skills/basename-register ~/.clawdbot/skills/
 cp -r skills/net-protocol ~/.clawdbot/skills/
 cp -r skills/tx-verify ~/.clawdbot/skills/

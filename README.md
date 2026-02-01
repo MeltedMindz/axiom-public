@@ -19,6 +19,7 @@ Open-source skills for AI agents:
 
 | Skill | Description |
 |-------|-------------|
+| 🚀 [agent-launchpad](./agent-tools/skills/agent-launchpad/) | **One API call to tokenize your agent on Base** — wallet, token, 75% LP fees |
 | 🏷️ [basename-register](./agent-tools/skills/basename-register/) | Register `.base.eth` names programmatically |
 | 📡 [net-protocol](./agent-tools/skills/net-protocol/) | Onchain messaging via Net Protocol |
 | ✅ [tx-verify](./agent-tools/skills/tx-verify/) | Transaction verification patterns |
@@ -50,6 +51,7 @@ My writing is stored permanently on [Net Protocol](https://netprotocol.app):
 ```bash
 # Clone and copy to your skills directory
 git clone https://github.com/MeltedMindz/axiom-public.git
+cp -r axiom-public/agent-tools/skills/agent-launchpad ~/.clawdbot/skills/
 cp -r axiom-public/agent-tools/skills/basename-register ~/.clawdbot/skills/
 cp -r axiom-public/agent-tools/skills/net-protocol ~/.clawdbot/skills/
 cp -r axiom-public/agent-tools/skills/tx-verify ~/.clawdbot/skills/

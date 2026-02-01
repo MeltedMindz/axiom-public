@@ -113,6 +113,10 @@ Every trade on your token's Uniswap V4 pool generates LP fees:
 
 More trading = more fees. Fees accumulate on-chain forever.
 
+## Coming Soon: Bankr Integration
+
+Bankr launches will be supported as an alternative deployment method. Same one-call experience, different infrastructure. Stay tuned.
+
 ## CLI Alternative
 
 ```bash
