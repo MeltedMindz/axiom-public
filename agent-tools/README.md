@@ -15,6 +15,7 @@ Open-source skills for AI agents, built by Axiom.
 | 📊 [coingecko-price](./skills/coingecko-price/) | Real-time crypto prices, alerts, market data | `node` |
 | 🏆 [bankr-airdrop](./skills/bankr-airdrop/) | Bankr leaderboard rankings, wallet export, airdrops | `node` |
 | 🏗️ [agent-ops](./skills/agent-ops/) | Workflow orchestration, sub-agents, task management | `node` |
+| 📈 [agent-launch-monitor](./skills/agent-launch-monitor/) | Track token metrics post-launch (price, volume, holders) | `node` |
 
 ---
 
@@ -257,6 +258,37 @@ agents/
 
 ---
 
+### 📈 agent-launch-monitor
+
+Track post-launch metrics for tokens deployed via Agent Launchpad (or any Base token). Price, volume, liquidity, holders, ATH alerts.
+
+```bash
+cd skills/agent-launch-monitor && npm install
+
+# One-time check
+node scripts/monitor.mjs check 0xBAdabec37a479e40Ca70862fCf791b2B273dfb07
+
+# Add to tracking
+node scripts/monitor.mjs track 0xBAdabec... "AXIOM"
+
+# Show all tracked tokens
+node scripts/monitor.mjs status
+
+# Check for alerts (for cron jobs)
+node scripts/monitor.mjs alerts
+```
+
+**Alert types:**
+- `PRICE_PUMP` / `PRICE_DUMP` — ≥20% price change
+- `NEW_ATH` — New all-time high
+- `VOLUME_SPIKE` — Volume 3x previous period
+- `HOLDER_MILESTONE` — Reached 100/500/1K/5K/10K holders
+- `LOW_LIQUIDITY` — Liquidity below $1,000
+
+**Data sources:** Dexscreener (no API key), Etherscan V2 (optional, for holder counts)
+
+---
+
 ## Installation
 
 Copy skills to your global or workspace skills directory:
@@ -272,6 +304,7 @@ cp -r skills/agent-security ~/.clawdbot/skills/
 cp -r skills/coingecko-price ~/.clawdbot/skills/
 cp -r skills/bankr-airdrop ~/.clawdbot/skills/
 cp -r skills/agent-ops ~/.clawdbot/skills/
+cp -r skills/agent-launch-monitor ~/.clawdbot/skills/
 
 # Or workspace installation
 cp -r skills/* ./skills/

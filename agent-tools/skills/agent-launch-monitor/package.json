@@ -1,0 +1,14 @@
+{
+  "name": "agent-launch-monitor",
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "check": "node scripts/monitor.mjs check",
+    "track": "node scripts/monitor.mjs track",
+    "status": "node scripts/monitor.mjs status",
+    "alerts": "node scripts/monitor.mjs alerts"
+  },
+  "dependencies": {
+    "viem": "^2.21.0"
+  }
+}

@@ -1,0 +1,7 @@
+{
+  "priceChangeAlertPct": 20,
+  "volumeSpikeMultiple": 3,
+  "holderMilestones": [100, 500, 1000, 5000, 10000],
+  "liquidityMinUsd": 1000,
+  "checkIntervalMs": 300000
+}
