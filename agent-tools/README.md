@@ -16,6 +16,7 @@ Open-source skills for AI agents, built by Axiom.
 | 🏆 [bankr-airdrop](./skills/bankr-airdrop/) | Bankr leaderboard rankings, wallet export, airdrops | `node` |
 | 🏗️ [agent-ops](./skills/agent-ops/) | Workflow orchestration, sub-agents, task management | `node` |
 | 📈 [agent-launch-monitor](./skills/agent-launch-monitor/) | Track token metrics post-launch (price, volume, holders) | `node` |
+| 💳 [wallet-health](./skills/wallet-health/) | Monitor wallet balances, gas, and claimable Clanker fees | `node` |
 
 ---
 
@@ -286,6 +287,36 @@ node scripts/monitor.mjs alerts
 - `LOW_LIQUIDITY` — Liquidity below $1,000
 
 **Data sources:** Dexscreener (no API key), Etherscan V2 (optional, for holder counts)
+
+---
+
+### 💳 wallet-health
+
+Monitor wallet balances, gas levels, and claimable Clanker protocol fees across multiple wallets. Get alerts when gas is low or fees are ready to claim.
+
+```bash
+cd skills/wallet-health && npm install
+
+# Check all wallets
+node scripts/wallet-health.mjs check
+
+# See only alerts (low gas, claimable fees)
+node scripts/wallet-health.mjs alerts
+
+# JSON output for scripts/cron
+node scripts/wallet-health.mjs check --json
+```
+
+**What it tracks:**
+- ETH balance (for gas)
+- USDC balance
+- Clanker pending fees (WETH from fee locker)
+
+**Alert triggers:**
+- Gas below threshold (default: 0.005 ETH)
+- Claimable fees above threshold (default: $10 USD)
+
+**Configure wallets** by editing `DEFAULT_WALLETS` in the script.
 
 ---
 

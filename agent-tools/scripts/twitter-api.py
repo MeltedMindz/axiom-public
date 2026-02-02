@@ -8,6 +8,8 @@ Usage:
   python3 twitter-api.py retweet <tweet_id>
   python3 twitter-api.py delete <tweet_id>
   python3 twitter-api.py bio "New bio text"
+  python3 twitter-api.py dm <user_id> "Message text"
+  python3 twitter-api.py dm-conv <conversation_id> "Message text"
 """
 
 import sys, time, hashlib, hmac, urllib.parse, secrets, base64, http.client, json
@@ -78,6 +80,33 @@ def bio(text):
     data = json.loads(r.read().decode())
     print(f"✅ Bio: {data.get('description', data)}")
 
+def dm(recipient_id, text):
+    """Send a DM using Twitter API v2"""
+    # v2 DM endpoint
+    body = {
+        "text": text,
+        "participant_ids": [recipient_id]
+    }
+    status, data = api_call("POST", "/2/dm_conversations", body)
+    if status == 201 or "data" in data:
+        print(f"✅ DM sent to {recipient_id}")
+        if "data" in data:
+            print(f"   Conversation: {data['data'].get('dm_conversation_id', 'unknown')}")
+    elif status == 403:
+        print(f"❌ DM failed (403): No permission. Need elevated API access or user doesn't allow DMs.")
+        print(f"   Details: {data}")
+    else:
+        print(f"❌ DM failed ({status}): {data}")
+
+def dm_to_conversation(conversation_id, text):
+    """Send a DM to existing conversation"""
+    body = {"text": text}
+    status, data = api_call("POST", f"/2/dm_conversations/{conversation_id}/messages", body)
+    if status == 201 or "data" in data:
+        print(f"✅ DM sent to conversation {conversation_id}")
+    else:
+        print(f"❌ DM failed ({status}): {data}")
+
 if __name__ == "__main__":
     if len(sys.argv) < 2:
         print(__doc__)
@@ -96,6 +125,10 @@ if __name__ == "__main__":
         delete(sys.argv[2])
     elif cmd == "bio":
         bio(sys.argv[2])
+    elif cmd == "dm":
+        dm(sys.argv[2], sys.argv[3])
+    elif cmd == "dm-conv":
+        dm_to_conversation(sys.argv[2], sys.argv[3])
     else:
         print(f"Unknown command: {cmd}")
         print(__doc__)

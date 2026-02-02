@@ -1,0 +1,13 @@
+{
+  "name": "wallet-health",
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "check": "node scripts/wallet-health.mjs check",
+    "alerts": "node scripts/wallet-health.mjs alerts"
+  },
+  "dependencies": {
+    "viem": "^2.21.0",
+    "dotenv": "^16.0.0"
+  }
+}
