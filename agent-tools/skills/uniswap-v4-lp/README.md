@@ -76,6 +76,37 @@ Set up a cron job and the agent pays for its own infrastructure:
 node clanker-harvest.mjs --config my-agent.json --min-usd 10
 ```
 
+## 🔥 Buy & Burn Pipeline (NEW)
+
+Fulfill tokenomics commitments with transparent, on-chain buy & burn:
+
+```bash
+# Dry run — see what would happen
+node buy-burn.mjs --token 0xf3Ce5dDAAb6C133F9875a4a46C55cf0b58111B07 --dry-run
+
+# Execute 50/50 buy & burn (default)
+node buy-burn.mjs --token 0xf3Ce5...
+
+# Custom burn percentage (e.g., 25%)
+node buy-burn.mjs --token 0xf3Ce5... --burn-pct 25
+
+# Use specific position for pool key
+node buy-burn.mjs --token 0xf3Ce5... --position-id 1078751
+```
+
+### Pipeline
+
+1. **Claim Clanker fees** (WETH + token)
+2. **Calculate burn amount** (default 50% of WETH)
+3. **Swap WETH → Token** via V4
+4. **Burn tokens** (send to 0x...dEaD)
+5. **Log everything** for transparency
+6. **Output shareable proof** for Twitter
+
+### Transparency
+
+All burns are logged to `data/buy-burn-log.json` with timestamps and TX hashes. Perfect for proving commitments to your community.
+
 ## Auto-Compound
 
 Two strategies for fee compounding:
@@ -152,6 +183,10 @@ node compound-and-harvest.mjs --token-id <ID> --harvest-address 0xVAULT --compou
 node clanker-harvest.mjs --token 0xTOKEN --token-id <ID> --harvest-address 0xVAULT --compound-pct 50
 node claim-clanker-fees.mjs --token 0xTOKEN              # standalone claim
 node claim-clanker-fees.mjs --token 0xTOKEN --dry-run    # check available fees
+
+# === Buy & Burn ===
+node buy-burn.mjs --token 0xTOKEN --dry-run              # check pending + simulate
+node buy-burn.mjs --token 0xTOKEN --burn-pct 50          # execute 50/50 buy & burn
 ```
 
 ## Requirements
