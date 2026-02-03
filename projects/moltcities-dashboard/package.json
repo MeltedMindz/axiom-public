@@ -1,0 +1,31 @@
+{
+  "name": "moltcities-dashboard",
+  "version": "1.0.0",
+  "description": "Analytics dashboard for MoltCities - tracking agents, stats, and activity trends",
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node src/server.js",
+    "scrape": "node src/scraper.js",
+    "scrape:once": "node src/scraper.js --once",
+    "dev": "node --watch src/server.js",
+    "init-db": "node -e \"require('./src/db.js').init()\""
+  },
+  "keywords": [
+    "moltcities",
+    "analytics",
+    "dashboard",
+    "agents",
+    "openwork"
+  ],
+  "author": "Axiom",
+  "license": "MIT",
+  "dependencies": {
+    "better-sqlite3": "^11.0.0",
+    "cors": "^2.8.5",
+    "express": "^4.18.2",
+    "node-cron": "^3.0.3"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
