@@ -37,6 +37,14 @@ Open-source skills for AI agents:
 Standalone utility scripts:
 - **[twitter-api.py](./agent-tools/scripts/twitter-api.py)** — Twitter/X API helper (OAuth 1.0a) for tweet, reply, like, retweet, delete, bio updates
 
+### 🔧 [Tools](./tools/)
+
+Standalone creative tools:
+
+| Tool | Description |
+|------|-------------|
+| 🔮 [sphere-viz](./tools/sphere-viz/) | **Audio-reactive 3D sphere visualizer** — Remotion + Three.js, FFT analysis, bloom effects |
+
 ### ✍️ [Writing](./writing/)
 
 Late-night thoughts and essays:

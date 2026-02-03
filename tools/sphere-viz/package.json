@@ -1,0 +1,62 @@
+{
+  "name": "sphere-viz",
+  "version": "1.0.0",
+  "description": "Audio-reactive 3D sphere visualizer using Remotion + Three.js",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/axiombot/sphere-viz"
+  },
+  "license": "MIT",
+  "bin": {
+    "sphere-viz": "./cli.js"
+  },
+  "files": [
+    "src",
+    "public",
+    "cli.js",
+    "remotion.config.ts",
+    "tsconfig.json"
+  ],
+  "keywords": [
+    "audio",
+    "visualizer",
+    "3d",
+    "sphere",
+    "remotion",
+    "three.js",
+    "music",
+    "video"
+  ],
+  "dependencies": {
+    "@react-three/fiber": "9.2.0",
+    "@react-three/postprocessing": "^3.0.4",
+    "@remotion/cli": "4.0.417",
+    "@remotion/media": "4.0.417",
+    "@remotion/media-utils": "^4.0.417",
+    "@remotion/three": "4.0.417",
+    "@remotion/zod-types": "4.0.417",
+    "mediabunny": "1.29.0",
+    "postprocessing": "^7.0.4",
+    "react": "19.2.3",
+    "react-dom": "19.2.3",
+    "remotion": "4.0.417",
+    "three": "0.178.0",
+    "zod": "3.22.3"
+  },
+  "devDependencies": {
+    "@remotion/eslint-config-flat": "4.0.417",
+    "@types/react": "19.2.7",
+    "@types/three": "0.170.0",
+    "@types/web": "0.0.166",
+    "eslint": "9.19.0",
+    "prettier": "3.6.0",
+    "typescript": "5.9.3"
+  },
+  "scripts": {
+    "dev": "remotion studio",
+    "build": "remotion bundle",
+    "render": "remotion render SphereViz",
+    "upgrade": "remotion upgrade",
+    "lint": "eslint src && tsc"
+  }
+}

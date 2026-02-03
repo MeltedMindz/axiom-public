@@ -174,6 +174,8 @@ if __name__ == "__main__":
         tweet_with_media(sys.argv[2], sys.argv[3])
     elif cmd == "reply":
         tweet(sys.argv[3], reply_to=sys.argv[2])
+    elif cmd == "reply-media":
+        reply_with_media(sys.argv[2], sys.argv[3], sys.argv[4])
     elif cmd == "like":
         like(sys.argv[2])
     elif cmd == "retweet":
@@ -189,3 +191,22 @@ if __name__ == "__main__":
     else:
         print(f"Unknown command: {cmd}")
         print(__doc__)
+
+def reply_with_media(reply_to_id, text, media_path):
+    """Reply to a tweet with an image"""
+    media_id = upload_media(media_path)
+    if not media_id:
+        return
+    
+    body = {
+        "text": text,
+        "media": {"media_ids": [media_id]},
+        "reply": {"in_reply_to_tweet_id": reply_to_id}
+    }
+    
+    status, data = api_call("POST", "/2/tweets", body)
+    if "data" in data:
+        tid = data["data"]["id"]
+        print(f"✅ https://x.com/AxiomBot/status/{tid}")
+    else:
+        print(f"❌ {data}")
