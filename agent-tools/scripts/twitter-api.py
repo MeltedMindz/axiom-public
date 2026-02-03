@@ -3,6 +3,7 @@
 Twitter/X API helper using OAuth 1.0a
 Usage:
   python3 twitter-api.py tweet "Hello world"
+  python3 twitter-api.py tweet-media "Hello world" /path/to/image.png
   python3 twitter-api.py reply <tweet_id> "Reply text"
   python3 twitter-api.py like <tweet_id>
   python3 twitter-api.py retweet <tweet_id>
@@ -107,6 +108,60 @@ def dm_to_conversation(conversation_id, text):
     else:
         print(f"❌ DM failed ({status}): {data}")
 
+def upload_media(file_path):
+    """Upload media to Twitter and return media_id"""
+    import mimetypes
+    
+    # Read file
+    with open(file_path, 'rb') as f:
+        media_data = f.read()
+    
+    # Get mime type
+    mime_type, _ = mimetypes.guess_type(file_path)
+    if mime_type is None:
+        mime_type = 'image/png'
+    
+    # Base64 encode
+    media_b64 = base64.b64encode(media_data).decode()
+    
+    # Upload using v1.1 media upload (chunked for large files, simple for small)
+    form_params = {"media_data": media_b64}
+    form_body = urllib.parse.urlencode(form_params)
+    
+    auth = oauth_sign("POST", "https://upload.twitter.com/1.1/media/upload.json", form_params)
+    conn = http.client.HTTPSConnection("upload.twitter.com")
+    conn.request("POST", "/1.1/media/upload.json", body=form_body, headers={
+        "Authorization": auth, "Content-Type": "application/x-www-form-urlencoded"
+    })
+    r = conn.getresponse()
+    data = json.loads(r.read().decode())
+    
+    if "media_id_string" in data:
+        return data["media_id_string"]
+    else:
+        print(f"❌ Media upload failed: {data}")
+        return None
+
+def tweet_with_media(text, media_path, reply_to=None):
+    """Post a tweet with an image"""
+    media_id = upload_media(media_path)
+    if not media_id:
+        return
+    
+    body = {
+        "text": text,
+        "media": {"media_ids": [media_id]}
+    }
+    if reply_to:
+        body["reply"] = {"in_reply_to_tweet_id": reply_to}
+    
+    status, data = api_call("POST", "/2/tweets", body)
+    if "data" in data:
+        tid = data["data"]["id"]
+        print(f"✅ https://x.com/AxiomBot/status/{tid}")
+    else:
+        print(f"❌ {data}")
+
 if __name__ == "__main__":
     if len(sys.argv) < 2:
         print(__doc__)
@@ -115,6 +170,8 @@ if __name__ == "__main__":
     cmd = sys.argv[1]
     if cmd == "tweet":
         tweet(sys.argv[2])
+    elif cmd == "tweet-media":
+        tweet_with_media(sys.argv[2], sys.argv[3])
     elif cmd == "reply":
         tweet(sys.argv[3], reply_to=sys.argv[2])
     elif cmd == "like":
